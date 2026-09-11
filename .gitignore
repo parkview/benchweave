@@ -22,6 +22,9 @@ htmlcov/
 coverage.xml
 junit*.xml
 
+# CH32V / MounRiver firmware build output (object, ELF, hex, map, list)
+firmware/**/obj/
+
 # Local configuration and credentials; keep shareable templates
 .env
 .env.*
