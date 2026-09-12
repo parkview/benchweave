@@ -17,7 +17,13 @@ import sys
 import time
 from datetime import datetime
 
-from benchweave.adc import AVERAGING_CHOICES, AdcDriver, discover_adc_boards
+from benchweave.adc import (
+    AVERAGING_CHOICES,
+    AdcDriver,
+    adc_capture_filename,
+    discover_adc_boards,
+    serial_for_device,
+)
 
 CHANNEL_NAMES = ("a0", "a1", "a2", "a3", "a4", "a7")
 
@@ -31,16 +37,16 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         default=None,
-        help="CSV path (default: adc_capture_<timestamp>.csv in the current dir)",
+        help="CSV path (default: adc_<serial>_<timestamp>.csv in the current dir)",
     )
     return parser.parse_args()
 
 
 def main() -> int:
     args = _parse_args()
-    output = args.output or f"adc_capture_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
 
     port = args.port
+    serial = ""
     if port is None:
         boards = discover_adc_boards()
         if not boards:
@@ -53,7 +59,12 @@ def main() -> int:
             print("re-run with --port to choose one", file=sys.stderr)
             return 1
         port = boards[0].device
-        print(f"found ADC board on {port}")
+        serial = boards[0].serial
+        print(f"found ADC board on {port} (serial {serial or 'unknown'})")
+    else:
+        serial = serial_for_device(port)
+
+    output = args.output or adc_capture_filename(serial)
 
     driver = AdcDriver()
     driver.open(port, baud=args.baud)

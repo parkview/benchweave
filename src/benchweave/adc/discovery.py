@@ -10,6 +10,9 @@ signature (protocol 1, 6 channels, 12-bit resolution).
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
+
+from serial.tools import list_ports  # type: ignore[import-untyped]
 
 from benchweave.adc.driver import AdcDriver
 from benchweave.adc.protocol import IdentifyInfo
@@ -24,7 +27,22 @@ EXPECTED_RESOLUTION = 12
 @dataclass(frozen=True)
 class AdcBoard:
     device: str
+    serial: str
     info: IdentifyInfo
+
+
+def adc_capture_filename(serial: str | None, *, ext: str = "csv") -> str:
+    """Build a descriptive capture filename: ``adc_<serial>_<YYYYmmdd_HHMMSS>.<ext>``."""
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return f"adc_{serial or 'unknown'}_{stamp}.{ext}"
+
+
+def serial_for_device(device: str) -> str:
+    """Return the USB serial number for a serial device path, or ``""`` if unknown."""
+    for port in list_ports.comports():
+        if port.device == device:
+            return port.serial_number or ""
+    return ""
 
 
 def discover_adc_boards(
@@ -40,26 +58,30 @@ def discover_adc_boards(
     if it replies with the expected signature. Pass ``vendor_id=None`` to probe
     every serial port instead.
     """
-    import serial.tools.list_ports as list_ports  # type: ignore[import-untyped]
-
     candidates = [
-        info.device
-        for info in list_ports.comports()
-        if vendor_id is None or info.vid == vendor_id
+        port
+        for port in list_ports.comports()
+        if vendor_id is None or port.vid == vendor_id
     ]
 
     boards: list[AdcBoard] = []
-    for device in candidates:
+    for port in candidates:
         driver = AdcDriver()
         try:
-            driver.open(device, baud=baud, timeout=timeout)
+            driver.open(port.device, baud=baud, timeout=timeout)
             info = driver.identify(timeout=timeout)
             if (
                 info.proto_version == EXPECTED_PROTOCOL
                 and info.n_channels == EXPECTED_CHANNELS
                 and info.resolution == EXPECTED_RESOLUTION
             ):
-                boards.append(AdcBoard(device=device, info=info))
+                boards.append(
+                    AdcBoard(
+                        device=port.device,
+                        serial=port.serial_number or "",
+                        info=info,
+                    )
+                )
         except Exception:
             # Not an ADC board (no reply, wrong reply, or unreadable): skip.
             continue

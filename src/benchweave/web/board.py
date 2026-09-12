@@ -1,16 +1,54 @@
-"""Board manager: owns the AdcDriver and bridges its live stream to asyncio."""
+"""Board manager: owns the AdcDriver, bridges its stream to asyncio, and records to CSV."""
 
 from __future__ import annotations
 
 import asyncio
+import csv
 import threading
+import time
 from contextlib import suppress
+from datetime import datetime
 
-from benchweave.adc import CHANNEL_MASK_ALL, AdcDriver, Sample, discover_adc_boards
+from benchweave.adc import (
+    CHANNEL_MASK_ALL,
+    AdcDriver,
+    Sample,
+    adc_capture_filename,
+    discover_adc_boards,
+    serial_for_device,
+)
+
+CHANNEL_NAMES = ("a0", "a1", "a2", "a3", "a4", "a7")
+CSV_HEADER = ["timestamp", "elapsed_s", "counter", "averaged_n", *CHANNEL_NAMES]
+
+
+class _Recorder:
+    """Appends samples to a CSV file, one row per sample."""
+
+    def __init__(self, path: str) -> None:
+        self.path = path
+        self._file = open(path, "w", newline="")  # noqa: SIM115 (held open for streaming)
+        self._writer = csv.writer(self._file)
+        self._writer.writerow(CSV_HEADER)
+        self._t0 = time.monotonic()
+
+    def write(self, sample: Sample) -> None:
+        self._writer.writerow(
+            [
+                datetime.now().isoformat(timespec="microseconds"),
+                round(time.monotonic() - self._t0, 6),
+                sample.counter,
+                sample.averaged_n,
+                *sample.channels,
+            ]
+        )
+
+    def close(self) -> None:
+        self._file.close()
 
 
 class BoardManager:
-    """Owns one ADC board: lifecycle, control, and live-sample fan-out to SSE clients."""
+    """Owns one ADC board: lifecycle, control, live fan-out, and optional CSV recording."""
 
     def __init__(self) -> None:
         self._driver = AdcDriver()
@@ -19,11 +57,15 @@ class BoardManager:
         self._subscribers: set[asyncio.Queue[Sample]] = set()
         self._worker: threading.Thread | None = None
         self._device: str | None = None
+        self._serial = ""
         self._fw_major: int | None = None
         self._fw_minor: int | None = None
         self._averaging = 0
         self._channel_mask = CHANNEL_MASK_ALL
         self._streaming = False
+        self._recording = False
+        self._recorder: _Recorder | None = None
+        self._record_path: str | None = None
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -34,6 +76,7 @@ class BoardManager:
         return [
             {
                 "device": board.device,
+                "serial": board.serial,
                 "firmware": f"{board.info.fw_major}.{board.info.fw_minor}",
                 "channels": board.info.n_channels,
                 "resolution": board.info.resolution,
@@ -46,6 +89,7 @@ class BoardManager:
             self._driver.open(device)
             info = self._driver.identify()
             self._device = device
+            self._serial = serial_for_device(device)
             self._fw_major = info.fw_major
             self._fw_minor = info.fw_minor
             self._averaging = 0
@@ -66,12 +110,15 @@ class BoardManager:
         return {
             "connected": self._device is not None,
             "device": self._device,
+            "serial": self._serial,
             "firmware": (
                 f"{self._fw_major}.{self._fw_minor}" if self._fw_major is not None else None
             ),
             "averaging": self._averaging,
             "channel_mask": self._channel_mask,
             "streaming": self._streaming,
+            "recording": self._recording,
+            "record_path": self._record_path,
         }
 
     # -- control -------------------------------------------------------------
@@ -90,12 +137,15 @@ class BoardManager:
             self._channel_mask = mask
         return self.status()
 
-    def start_stream(self) -> dict[str, object]:
+    def start_stream(self, record: bool = False) -> dict[str, object]:
         with self._lock:
             self._require_connected()
             if not self._streaming:
                 self._driver.start_stream()
                 self._streaming = True
+                self._recorder = _Recorder(adc_capture_filename(self._serial)) if record else None
+                self._record_path = self._recorder.path if self._recorder else None
+                self._recording = record
                 self._worker = threading.Thread(
                     target=self._stream_worker, name="adc-stream", daemon=True
                 )
@@ -113,6 +163,12 @@ class BoardManager:
         with suppress(Exception):
             self._driver.stop_stream()
         self._streaming = False
+        worker = self._worker
+        if worker is not None:
+            worker.join(timeout=2.0)
+            self._worker = None
+        self._recording = False
+        self._recorder = None
 
     # -- live stream fan-out -------------------------------------------------
 
@@ -126,13 +182,19 @@ class BoardManager:
 
     def _stream_worker(self) -> None:
         loop = self._loop
-        if loop is None:
-            return
+        recorder = self._recorder
         try:
             for sample in self._driver.iter_samples():
-                loop.call_soon_threadsafe(self._publish, sample)
+                if recorder is not None:
+                    recorder.write(sample)
+                if loop is not None:
+                    loop.call_soon_threadsafe(self._publish, sample)
         except Exception:
             pass
+        finally:
+            if recorder is not None:
+                with suppress(Exception):
+                    recorder.close()
 
     def _publish(self, sample: Sample) -> None:
         for queue in self._subscribers:

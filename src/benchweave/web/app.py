@@ -45,6 +45,10 @@ class ChannelsBody(BaseModel):
     mask: int
 
 
+class StreamStartBody(BaseModel):
+    record: bool = False
+
+
 @app.get("/api/boards")
 def list_boards() -> list[dict[str, object]]:
     return manager.discover()
@@ -86,9 +90,9 @@ def set_channels(body: ChannelsBody) -> dict[str, object]:
 
 
 @app.post("/api/stream/start")
-def stream_start() -> dict[str, object]:
+def stream_start(body: StreamStartBody | None = None) -> dict[str, object]:
     try:
-        return manager.start_stream()
+        return manager.start_stream(record=body.record if body else False)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

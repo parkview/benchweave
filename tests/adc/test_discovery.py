@@ -22,8 +22,8 @@ class _FakeDriver:
         pass
 
 
-def _port(device: str, vid: int | None) -> SimpleNamespace:
-    return SimpleNamespace(device=device, vid=vid)
+def _port(device: str, vid: int | None, serial: str = "SERIAL") -> SimpleNamespace:
+    return SimpleNamespace(device=device, vid=vid, serial_number=serial)
 
 
 def test_discover_filters_by_vendor_and_probes() -> None:
@@ -38,6 +38,7 @@ def test_discover_filters_by_vendor_and_probes() -> None:
         boards = discover_adc_boards()
 
     assert [b.device for b in boards] == ["/dev/ttyACM2"]
+    assert boards[0].serial == "SERIAL"
     assert boards[0].info.n_channels == 6
     assert boards[0].info.resolution == 12
 

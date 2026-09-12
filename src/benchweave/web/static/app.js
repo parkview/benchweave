@@ -177,7 +177,11 @@ async function onStreamToggle() {
       if (eventSource) eventSource.close();
       eventSource = null;
     } else {
-      await api("/api/stream/start", { method: "POST" });
+      const record = document.getElementById("record").checked;
+      await api("/api/stream/start", {
+        method: "POST",
+        body: JSON.stringify({ record }),
+      });
       openEventSource();
     }
     await refreshStatus();
