@@ -273,7 +273,7 @@ git commit -m "feat: add ADC binary protocol codec" -m "Co-Authored-By: Claude <
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to `tests/adc/test_protocol.py`:
+Merge the new imports into the existing top-of-file `from benchweave.adc.protocol import (...)` block (so imports stay at the top of the file), and append the test functions to the end of `tests/adc/test_protocol.py`:
 
 ```python
 from benchweave.adc.protocol import (
