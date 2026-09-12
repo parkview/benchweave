@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Protocol
 
-from benchweave.adc import protocol
+from . import protocol
 
 DEFAULT_BAUD = 2_000_000
 

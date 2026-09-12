@@ -18,7 +18,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from benchweave.adc import (
+from plugins.adc_6ch_12bit import (
     AVERAGING_CHOICES,
     AdcDriver,
     adc_capture_filename,

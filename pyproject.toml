@@ -40,7 +40,7 @@ dev = [
 benchweave = "benchweave.__main__:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/benchweave"]
+packages = ["src/benchweave", "plugins"]
 
 [tool.pytest.ini_options]
 addopts = "-q -p no:cacheprovider"
@@ -57,4 +57,4 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 [tool.mypy]
 python_version = "3.13"
 strict = true
-files = ["src/benchweave", "tests"]
+files = ["src/benchweave", "plugins", "tests"]

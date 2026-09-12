@@ -6,7 +6,7 @@ from collections.abc import Callable
 
 import pytest
 
-from benchweave.adc.driver import (
+from plugins.adc_6ch_12bit.driver import (
     AdcConnectionError,
     AdcDriver,
     AdcError,
@@ -14,7 +14,7 @@ from benchweave.adc.driver import (
     AdcProtocolError,
     AdcTimeout,
 )
-from benchweave.adc.protocol import Frame, FrameParser, FrameType, IdentifyInfo, encode_frame
+from plugins.adc_6ch_12bit.protocol import Frame, FrameParser, FrameType, IdentifyInfo, encode_frame
 
 
 class FakeTransport:

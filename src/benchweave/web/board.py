@@ -10,7 +10,7 @@ from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
 
-from benchweave.adc import (
+from plugins.adc_6ch_12bit import (
     CHANNEL_MASK_ALL,
     AdcDriver,
     Sample,

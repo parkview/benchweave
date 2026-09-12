@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from benchweave.adc.protocol import (
+from plugins.adc_6ch_12bit.protocol import (
     CHANNEL_MASK_ALL,
     Frame,
     FrameParser,

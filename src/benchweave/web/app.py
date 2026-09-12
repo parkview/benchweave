@@ -14,8 +14,8 @@ from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from benchweave.adc.protocol import AVERAGING_CHOICES, CHANNEL_MASK_ALL
 from benchweave.web.board import BoardManager
+from plugins.adc_6ch_12bit.protocol import AVERAGING_CHOICES, CHANNEL_MASK_ALL
 
 STATIC_DIR = Path(__file__).parent / "static"
 SSE_MIN_INTERVAL = 0.033  # downsample the live view to ~30 Hz

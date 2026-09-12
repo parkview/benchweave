@@ -14,8 +14,8 @@ from datetime import datetime
 
 from serial.tools import list_ports  # type: ignore[import-untyped]
 
-from benchweave.adc.driver import AdcDriver
-from benchweave.adc.protocol import IdentifyInfo
+from .driver import AdcDriver
+from .protocol import IdentifyInfo
 
 WCH_VENDOR_ID = 0x1A86  # WCH (CH343G / CH340 / CH9102) USB-UART bridges
 

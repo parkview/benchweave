@@ -3,9 +3,9 @@ from unittest import mock
 import pytest
 from fastapi import HTTPException
 
-from benchweave.adc.protocol import IdentifyInfo
 from benchweave.web import app as web_app
 from benchweave.web.board import BoardManager
+from plugins.adc_6ch_12bit.protocol import IdentifyInfo
 
 
 class _FakeDriver:

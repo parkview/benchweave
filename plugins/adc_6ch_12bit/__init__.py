@@ -1,12 +1,12 @@
 """6-channel ADC board serial driver (master side)."""
 
-from benchweave.adc.discovery import (
+from .discovery import (
     AdcBoard,
     adc_capture_filename,
     discover_adc_boards,
     serial_for_device,
 )
-from benchweave.adc.driver import (
+from .driver import (
     AdcConnectionError,
     AdcDriver,
     AdcError,
@@ -15,7 +15,7 @@ from benchweave.adc.driver import (
     AdcTimeout,
     Sample,
 )
-from benchweave.adc.protocol import (
+from .protocol import (
     AVERAGING_CHOICES,
     CHANNEL_MASK_ALL,
     FrameType,
