@@ -103,31 +103,35 @@ class FrameParser:
         return frames
 
     def _extract(self) -> Frame | None:
-        buf = self._buffer
-        start = buf.find(SYNC)
-        if start < 0:
-            keep = 1 if len(buf) > 1 else len(buf)
-            self._buffer = buf[-keep:]
-            return None
-        if start > 0:
-            self.error_count += 1
-            del buf[:start]
-        if len(buf) < HEADER_LEN:
-            return None
-        length = buf[4]
-        total = HEADER_LEN + length + CRC_LEN
-        if len(buf) < total:
-            return None
-        frame_bytes = bytes(buf[:total])
-        got_crc = int.from_bytes(frame_bytes[-CRC_LEN:], "little")
-        if crc16(frame_bytes[2 : HEADER_LEN + length]) != got_crc:
-            self.error_count += 1
-            del buf[0]
-            return None
-        del buf[:total]
-        return Frame(
-            type=frame_bytes[2], seq=frame_bytes[3], payload=frame_bytes[5 : HEADER_LEN + length]
-        )
+        while True:
+            buf = self._buffer
+            start = buf.find(SYNC)
+            if start < 0:
+                keep = 1 if len(buf) > 1 else len(buf)
+                self._buffer = buf[-keep:]
+                return None
+            if start > 0:
+                self.error_count += 1
+                del buf[:start]
+                continue
+            if len(buf) < HEADER_LEN:
+                return None
+            length = buf[4]
+            total = HEADER_LEN + length + CRC_LEN
+            if len(buf) < total:
+                return None
+            frame_bytes = bytes(buf[:total])
+            got_crc = int.from_bytes(frame_bytes[-CRC_LEN:], "little")
+            if crc16(frame_bytes[2 : HEADER_LEN + length]) != got_crc:
+                self.error_count += 1
+                del buf[0]
+                continue
+            del buf[:total]
+            return Frame(
+                type=frame_bytes[2],
+                seq=frame_bytes[3],
+                payload=frame_bytes[5 : HEADER_LEN + length],
+            )
 
 
 def build_set_averaging(n: int) -> bytes:

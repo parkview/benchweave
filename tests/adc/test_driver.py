@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import threading
 import time
 from collections.abc import Callable
 
 import pytest
 
 from benchweave.adc.driver import (
+    AdcConnectionError,
     AdcDriver,
+    AdcError,
     AdcNotConnected,
     AdcProtocolError,
     AdcTimeout,
@@ -246,4 +249,116 @@ def test_stream_recovers_after_garbage() -> None:
     sample = next(driver.iter_samples())
     assert sample.counter == 1
     assert sample.channels == (1, 2, 3, 4, 5, 6)
+    driver.close()
+
+
+def test_inflight_command_raises_connection_error_on_fault() -> None:
+    fake = FakeTransport()  # no responder -> identify blocks waiting
+    driver = AdcDriver(transport=fake)
+    driver.open()
+
+    errors: list[AdcError] = []
+
+    def run() -> None:
+        try:
+            driver.identify(timeout=5.0)
+        except AdcError as exc:
+            errors.append(exc)
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    time.sleep(0.05)  # let the command enter its wait
+    driver._faulted = True  # simulate the reader thread faulting
+    with driver._response_cond:
+        driver._response_cond.notify_all()
+    thread.join(timeout=2.0)
+    assert not thread.is_alive()
+    assert errors and isinstance(errors[0], AdcConnectionError)
+    driver.close()
+
+
+def test_iter_samples_raises_on_fault() -> None:
+    fake = FakeTransport()
+
+    def respond(data: bytes) -> None:
+        for f in FrameParser().feed(data):
+            if f.type == FrameType.START_STREAM:
+                fake.push(ack(FrameType.START_STREAM))
+
+    fake.responder = respond
+    driver = AdcDriver(transport=fake)
+    driver.open()
+    driver.start_stream()
+
+    def boom(size: int = 1) -> bytes:
+        raise OSError("boom")
+
+    fake.read = boom  # type: ignore[method-assign]
+    time.sleep(0.05)  # reader faults
+    with pytest.raises(AdcConnectionError):
+        next(driver.iter_samples())
+    driver.close()
+
+
+def test_malformed_ack_raises_protocol_error() -> None:
+    fake = FakeTransport()
+
+    def respond(data: bytes) -> None:
+        for f in FrameParser().feed(data):
+            if f.type == FrameType.SET_AVERAGING:
+                # 1-byte ACK (missing the u16 value)
+                fake.push(encode_frame(Frame(FrameType.ACK, 0, bytes([FrameType.SET_AVERAGING]))))
+
+    fake.responder = respond
+    driver = AdcDriver(transport=fake)
+    driver.open()
+    with pytest.raises(AdcProtocolError):
+        driver.set_averaging(32, timeout=0.5)
+    driver.close()
+
+
+def test_nak_to_identify_raises_protocol_error() -> None:
+    fake = FakeTransport()
+
+    def respond(data: bytes) -> None:
+        for f in FrameParser().feed(data):
+            if f.type == FrameType.IDENTIFY:
+                fake.push(encode_frame(Frame(FrameType.NAK, 0, bytes([FrameType.IDENTIFY, 0x04]))))
+
+    fake.responder = respond
+    driver = AdcDriver(transport=fake)
+    driver.open()
+    with pytest.raises(AdcProtocolError):
+        driver.identify(timeout=0.5)
+    driver.close()
+
+
+def test_bad_sample_frame_does_not_fault() -> None:
+    fake = FakeTransport()
+
+    def respond(data: bytes) -> None:
+        for f in FrameParser().feed(data):
+            if f.type == FrameType.IDENTIFY:
+                fake.push(encode_frame(Frame(FrameType.IDENTIFY_RSP, 0, bytes([1, 0, 0, 6, 12]))))
+
+    fake.responder = respond
+    driver = AdcDriver(transport=fake)
+    driver.open()
+    # A SAMPLE frame with a valid CRC but a too-short payload.
+    fake.push(encode_frame(Frame(FrameType.SAMPLE, 0, b"\x00")))
+    time.sleep(0.05)  # let the reader process it
+    # The driver must still be usable (not faulted).
+    assert driver.identify() == IdentifyInfo(1, 0, 0, 6, 12)
+    driver.close()
+
+
+def test_open_resets_session_state() -> None:
+    fake = FakeTransport()
+    driver = AdcDriver(transport=fake)
+    driver.open()
+    driver._averaged_n = 64  # simulate stale config
+    driver.close()
+    driver._transport = FakeTransport()
+    driver.open()
+    assert driver.averaging == 0
     driver.close()

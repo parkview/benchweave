@@ -106,6 +106,12 @@ class AdcDriver:
         self._parser = protocol.FrameParser()
         self._pending_response = None
         self._pending_cmd = None
+        self._sample_queue = queue.Queue()
+        self._seq = 0
+        self._averaged_n = 0
+        self._awaiting_single = False
+        self._single_sample = None
+        self._single_event.clear()
         self._running = True
         self._reader = threading.Thread(target=self._reader_loop, name="adc-reader", daemon=True)
         self._reader.start()
@@ -113,6 +119,8 @@ class AdcDriver:
 
     def close(self) -> None:
         self._running = False
+        with self._response_cond:
+            self._response_cond.notify_all()
         if self._reader is not None and self._reader is not threading.current_thread():
             self._reader.join(timeout=2.0)
         if self._transport is not None:
@@ -138,13 +146,23 @@ class AdcDriver:
     def identify(self, *, timeout: float | None = None) -> protocol.IdentifyInfo:
         self._require_state(_State.CONNECTED, _State.CONFIGURED)
         resp = self._transact(protocol.FrameType.IDENTIFY, b"", timeout=timeout)
+        if resp.type == protocol.FrameType.NAK:
+            try:
+                _, error = protocol.parse_nak(resp.payload)
+            except ValueError as exc:
+                raise AdcProtocolError(f"malformed NAK payload: {exc}") from exc
+            raise AdcProtocolError(f"device NAK for IDENTIFY: error {error:#x}")
         if resp.type != protocol.FrameType.IDENTIFY_RSP:
             raise AdcProtocolError(f"unexpected response type {resp.type:#x}")
-        return protocol.parse_identify(resp.payload)
+        try:
+            return protocol.parse_identify(resp.payload)
+        except ValueError as exc:
+            raise AdcProtocolError(f"malformed IDENTIFY payload: {exc}") from exc
 
     def reset(self, *, timeout: float | None = None) -> None:
         self._require_state(_State.CONNECTED, _State.CONFIGURED, _State.STREAMING)
         self._command(protocol.FrameType.RESET, b"", timeout=timeout)
+        self._averaged_n = 0
         self._state = _State.CONNECTED
 
     def set_averaging(self, n: int, *, timeout: float | None = None) -> None:
@@ -190,8 +208,8 @@ class AdcDriver:
     def sample_once(self, *, timeout: float | None = None) -> Sample:
         self._require_state(_State.CONNECTED, _State.CONFIGURED)
         self._single_sample = None
-        self._awaiting_single = True
         self._single_event.clear()
+        self._awaiting_single = True
         try:
             self._transact(protocol.FrameType.SAMPLE_ONCE, b"", timeout=timeout)
             wait = timeout if timeout is not None else self._timeout
@@ -203,11 +221,13 @@ class AdcDriver:
             self._awaiting_single = False
 
     def iter_samples(self) -> Iterator[Sample]:
-        while self._state is _State.STREAMING:
+        while self._state is _State.STREAMING and not self._faulted:
             try:
                 yield self._sample_queue.get(timeout=0.5)
             except queue.Empty:
                 continue
+        if self._faulted:
+            raise AdcConnectionError("transport faulted")
 
     # -- internals ----------------------------------------------------------
 
@@ -229,11 +249,17 @@ class AdcDriver:
     ) -> tuple[int, int]:
         resp = self._transact(cmd, payload, timeout=timeout)
         if resp.type == protocol.FrameType.NAK:
-            echo, error = protocol.parse_nak(resp.payload)
+            try:
+                _, error = protocol.parse_nak(resp.payload)
+            except ValueError as exc:
+                raise AdcProtocolError(f"malformed NAK payload: {exc}") from exc
             raise AdcProtocolError(f"device NAK for {cmd.name}: error {error:#x}")
         if resp.type != protocol.FrameType.ACK:
             raise AdcProtocolError(f"unexpected response type {resp.type:#x}")
-        return protocol.parse_ack(resp.payload)
+        try:
+            return protocol.parse_ack(resp.payload)
+        except ValueError as exc:
+            raise AdcProtocolError(f"malformed ACK payload: {exc}") from exc
 
     def _transact(
         self, cmd: protocol.FrameType, payload: bytes, *, timeout: float | None = None
@@ -250,6 +276,9 @@ class AdcDriver:
             self._transport.write(protocol.encode_frame(frame))
             with self._response_cond:
                 while self._pending_response is None:
+                    if self._faulted or not self._running:
+                        self._pending_cmd = None
+                        raise AdcConnectionError("transport faulted or closed")
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         self._pending_cmd = None
@@ -285,7 +314,7 @@ class AdcDriver:
         if cmd is None:
             return False
         if cmd is protocol.FrameType.IDENTIFY:
-            return frame.type == protocol.FrameType.IDENTIFY_RSP
+            return frame.type in (protocol.FrameType.IDENTIFY_RSP, protocol.FrameType.NAK)
         if frame.type == protocol.FrameType.IDENTIFY_RSP:
             return False
         # ACK and NAK both carry echo_type as their first payload byte.
@@ -302,7 +331,11 @@ class AdcDriver:
                     self._pending_response = frame
                     self._response_cond.notify_all()
         elif frame.type == protocol.FrameType.SAMPLE:
-            counter, channels = protocol.parse_sample(frame.payload)
+            try:
+                counter, channels = protocol.parse_sample(frame.payload)
+            except ValueError:
+                # Malformed sample frame: skip it rather than faulting the link.
+                return
             sample = Sample(counter=counter, channels=channels, averaged_n=self._averaged_n)
             if self._state is _State.STREAMING:
                 self._sample_queue.put(sample)

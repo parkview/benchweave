@@ -103,3 +103,10 @@ def test_parse_sample() -> None:
     channels = (0, 1, 2, 3, 4, 5)
     payload = counter.to_bytes(4, "little") + b"".join(c.to_bytes(2, "little") for c in channels)
     assert parse_sample(payload) == (counter, channels)
+
+
+def test_parser_drains_valid_frame_after_corrupt() -> None:
+    bad = bytes([0xAA, 0x55, 0x90, 0x00, 0x01, 0x00, 0x00, 0x00])  # wrong CRC
+    good = Frame(type=FrameType.SAMPLE, seq=2, payload=b"\x01" * 16)
+    parser = FrameParser()
+    assert parser.feed(bad + encode_frame(good)) == [good]
