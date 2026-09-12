@@ -187,3 +187,18 @@ an unknown state; the gap is observable via the `u32` counter.
   not exist). The driver is a plain importable module; wiring it into a device plugin is a
   later, separate task.
 - No external-trigger or cycle-sampling implementation (protocol reserves the fields).
+
+## 9. Deferred firmware features
+
+### 6× WS2812 status LEDs
+
+The ADC board has 6 WS2812 LEDs on a single data line (**PB1**), one per ADC port.
+
+- Address `0` = lowest port A0, `5` = A7.
+- **Green** = active port (enabled in the channel mask), at **15% brightness**.
+- **Red** = non-active (masked-out) port.
+- Refresh is **blocking and timing-safe**: performed only during hardware-config
+  handling, before the main ADC streaming loop — the board updates the LEDs, then
+  replies to the master. Reuses the bit-banged driver from
+  `firmware/CH32V006F8P-RS-485-Test-PCB/User/GD_WS2812_DRIVER.h` (adapt `num_leds = 6`,
+  fix the RGB buffer to `[6][3]`, and use PB1).
