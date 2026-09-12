@@ -87,6 +87,7 @@ class BoardManager:
 
     def connect(self, device: str) -> dict[str, object]:
         with self._lock:
+            self._close_locked()
             self._driver.open(device)
             info = self._driver.identify()
             self._device = device
@@ -100,12 +101,17 @@ class BoardManager:
 
     def disconnect(self) -> None:
         with self._lock:
-            self._stop_stream_locked()
-            with suppress(Exception):
-                self._driver.close()
-            self._device = None
-            self._fw_major = None
-            self._fw_minor = None
+            self._close_locked()
+
+    def _close_locked(self) -> None:
+        """Close any existing connection (idempotent). Caller holds the lock."""
+        self._stop_stream_locked()
+        with suppress(Exception):
+            self._driver.close()
+        self._device = None
+        self._serial = ""
+        self._fw_major = None
+        self._fw_minor = None
 
     def status(self) -> dict[str, object]:
         return {

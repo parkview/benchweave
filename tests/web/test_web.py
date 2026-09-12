@@ -16,6 +16,8 @@ class _FakeDriver:
         self.streaming = False
 
     def open(self, device: str, *, baud: int = 2_000_000, timeout: float = 1.0) -> None:
+        if self.opened:
+            raise RuntimeError("already open")
         self.opened = True
 
     def identify(self, *, timeout: float | None = None) -> IdentifyInfo:
@@ -70,6 +72,15 @@ def test_board_rejects_control_when_disconnected() -> None:
         manager = BoardManager()
         with pytest.raises(RuntimeError, match="no ADC board connected"):
             manager.start_stream()
+
+
+def test_board_reconnect_closes_previous_connection() -> None:
+    with mock.patch("benchweave.web.board.AdcDriver", _FakeDriver):
+        manager = BoardManager()
+        manager.connect("/dev/ttyACM2")
+        # Reconnecting (board unplugged then replugged) must not raise "already open".
+        manager.connect("/dev/ttyACM2")
+        assert manager.status()["connected"] is True
 
 
 def test_api_rejects_invalid_averaging() -> None:
