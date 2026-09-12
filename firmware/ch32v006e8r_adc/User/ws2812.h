@@ -23,7 +23,7 @@
 #define WS2812_NUM_LEDS        6
 #define WS2812_PORT            GPIOB
 #define WS2812_PIN             GPIO_Pin_1 /* PB1 */
-#define WS2812_BRIGHT_PERCENT  15
+#define WS2812_BRIGHT_PERCENT  7
 #define WS2812_BRIGHT          ((uint8_t)(255 * WS2812_BRIGHT_PERCENT / 100))
 #define WS2812_RESET_US        80 /* latch: >50 us low */
 
@@ -69,6 +69,17 @@ static void ws2812_send_colour(uint8_t red, uint8_t green, uint8_t blue)
     for (int8_t i = 7; i >= 0; i--) {
         ws2812_send_bit((blue >> i) & 1);
     }
+}
+
+/* Send one colour to every LED and latch. */
+static void ws2812_set_all(uint8_t red, uint8_t green, uint8_t blue)
+{
+    __disable_irq();
+    for (uint8_t i = 0; i < WS2812_NUM_LEDS; i++) {
+        ws2812_send_colour(red, green, blue);
+    }
+    __enable_irq();
+    Delay_Us(WS2812_RESET_US);
 }
 
 /* Set each LED green (active) or red (inactive) from a 6-bit channel mask. */

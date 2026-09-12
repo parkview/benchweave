@@ -505,7 +505,16 @@ int main(void) {
     ws2812_init();
 
     led_boot_blink();
-    ws2812_set_channels(channel_mask);
+
+    /* Power-up R-G-B cycle (300 ms each) at 15% brightness, then dim orange
+     * while waiting for the master to connect. */
+    ws2812_set_all(WS2812_BRIGHT, 0, 0);
+    Delay_Ms(300);
+    ws2812_set_all(0, WS2812_BRIGHT, 0);
+    Delay_Ms(300);
+    ws2812_set_all(0, 0, WS2812_BRIGHT);
+    Delay_Ms(300);
+    ws2812_set_all(WS2812_BRIGHT, WS2812_BRIGHT * 2 / 3, 0); /* dim orange */
 
     while (1) {
         /* 1. Drain RX ring buffer through the frame state machine. */
