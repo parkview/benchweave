@@ -25,6 +25,9 @@ junit*.xml
 # CH32V / MounRiver firmware build output (object, ELF, hex, map, list)
 firmware/**/obj/
 
+# Captured ADC data
+adc_capture_*.csv
+
 # Local configuration and credentials; keep shareable templates
 .env
 .env.*
