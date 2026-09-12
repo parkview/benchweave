@@ -122,3 +122,55 @@ def test_requires_open() -> None:
     driver = AdcDriver(transport=FakeTransport())
     with pytest.raises(AdcNotConnected):
         driver.identify()
+
+
+def test_wrong_echo_response_is_ignored() -> None:
+    fake = FakeTransport()
+
+    def respond(data: bytes) -> None:
+        for f in FrameParser().feed(data):
+            if f.type == FrameType.SET_AVERAGING:
+                # A stale ACK for a DIFFERENT command must not satisfy SET_AVERAGING.
+                fake.push(
+                    encode_frame(
+                        Frame(
+                            FrameType.ACK,
+                            0,
+                            bytes([FrameType.SET_CHANNELS]) + (32).to_bytes(2, "little"),
+                        )
+                    )
+                )
+
+    fake.responder = respond
+    driver = AdcDriver(transport=fake)
+    driver.open()
+    with pytest.raises(AdcTimeout):
+        driver.set_averaging(32, timeout=0.05)
+    driver.close()
+
+
+def test_reopen_after_fault_recovers() -> None:
+    fake = FakeTransport()
+    driver = AdcDriver(transport=fake)
+    driver.open()
+
+    def boom(size: int = 1) -> bytes:
+        raise OSError("boom")
+
+    fake.read = boom  # type: ignore[method-assign]
+    time.sleep(0.05)  # let the reader thread fault
+    driver.close()
+
+    # Reopen the SAME instance on a fresh transport must clear the fault.
+    fake2 = FakeTransport()
+
+    def respond(data: bytes) -> None:
+        for f in FrameParser().feed(data):
+            if f.type == FrameType.IDENTIFY:
+                fake2.push(encode_frame(Frame(FrameType.IDENTIFY_RSP, 0, bytes([1, 0, 0, 6, 12]))))
+
+    fake2.responder = respond
+    driver._transport = fake2
+    driver.open()
+    assert driver.identify() == IdentifyInfo(1, 0, 0, 6, 12)
+    driver.close()

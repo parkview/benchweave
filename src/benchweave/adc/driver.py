@@ -79,6 +79,7 @@ class AdcDriver:
         self._cmd_lock = threading.Lock()
         self._response_cond = threading.Condition()
         self._pending_response: protocol.Frame | None = None
+        self._pending_cmd: protocol.FrameType | None = None
         self._sample_queue: queue.Queue[Sample] = queue.Queue()
         self._seq = 0
         self._averaged_n = 0
@@ -100,7 +101,11 @@ class AdcDriver:
             self._transport = serial.Serial(port=port, baudrate=baud, timeout=timeout)
         if self._transport is None:
             raise AdcConnectionError("no transport: pass a port or inject a transport")
-        self._timeout = timeout
+        self._timeout = 1.0 if timeout is None else timeout
+        self._faulted = False
+        self._parser = protocol.FrameParser()
+        self._pending_response = None
+        self._pending_cmd = None
         self._running = True
         self._reader = threading.Thread(target=self._reader_loop, name="adc-reader", daemon=True)
         self._reader.start()
@@ -237,18 +242,22 @@ class AdcDriver:
             if self._transport is None:
                 raise AdcNotConnected("no transport")
             frame = protocol.Frame(type=int(cmd), seq=self._next_seq(), payload=payload)
-            self._transport.write(protocol.encode_frame(frame))
             wait = timeout if timeout is not None else self._timeout
             deadline = time.monotonic() + wait
             with self._response_cond:
+                self._pending_cmd = cmd
                 self._pending_response = None
+            self._transport.write(protocol.encode_frame(frame))
+            with self._response_cond:
                 while self._pending_response is None:
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
+                        self._pending_cmd = None
                         raise AdcTimeout(f"no response to {cmd.name}")
                     self._response_cond.wait(remaining)
                 resp = self._pending_response
                 self._pending_response = None
+                self._pending_cmd = None
             return resp
 
     def _reader_loop(self) -> None:
@@ -271,6 +280,17 @@ class AdcDriver:
                 break
         self._running = False
 
+    def _matches_pending(self, frame: protocol.Frame) -> bool:
+        cmd = self._pending_cmd
+        if cmd is None:
+            return False
+        if cmd is protocol.FrameType.IDENTIFY:
+            return frame.type == protocol.FrameType.IDENTIFY_RSP
+        if frame.type == protocol.FrameType.IDENTIFY_RSP:
+            return False
+        # ACK and NAK both carry echo_type as their first payload byte.
+        return len(frame.payload) >= 1 and frame.payload[0] == int(cmd)
+
     def _handle_frame(self, frame: protocol.Frame) -> None:
         if frame.type in (
             protocol.FrameType.ACK,
@@ -278,8 +298,9 @@ class AdcDriver:
             protocol.FrameType.IDENTIFY_RSP,
         ):
             with self._response_cond:
-                self._pending_response = frame
-                self._response_cond.notify_all()
+                if self._matches_pending(frame):
+                    self._pending_response = frame
+                    self._response_cond.notify_all()
         elif frame.type == protocol.FrameType.SAMPLE:
             counter, channels = protocol.parse_sample(frame.payload)
             sample = Sample(counter=counter, channels=channels, averaged_n=self._averaged_n)
