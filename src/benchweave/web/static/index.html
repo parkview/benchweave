@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BenchWeave ADC</title>
+  <script src="/chart.umd.js"></script>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 1.5rem; max-width: 64rem; }
+    h1 { margin: 0 0 0.5rem; }
+    section { margin: 1rem 0; padding: 0.75rem; border: 1px solid #ddd; border-radius: 6px; }
+    label, span { margin-right: 1rem; }
+    button, select { font-size: 0.95rem; }
+    #channels { display: inline-flex; gap: 0.75rem; flex-wrap: wrap; }
+    #chart-box { height: 360px; }
+    #status { color: #555; }
+  </style>
+</head>
+<body>
+  <h1>BenchWeave ADC</h1>
+
+  <section id="connect">
+    <button id="discover-btn">Discover</button>
+    <select id="board-select"></select>
+    <button id="connect-btn">Connect</button>
+    <span id="status">disconnected</span>
+  </section>
+
+  <section id="config" hidden>
+    <label>Averaging
+      <select id="averaging">
+        <option value="0">0 (raw)</option>
+        <option value="4">4</option>
+        <option value="8">8</option>
+        <option value="16">16</option>
+        <option value="32">32</option>
+        <option value="64">64</option>
+        <option value="128">128</option>
+        <option value="256">256</option>
+      </select>
+    </label>
+    <span>Channels:</span>
+    <span id="channels"></span>
+    <button id="stream-toggle">Start</button>
+  </section>
+
+  <section id="graph">
+    <div id="chart-box"><canvas id="chart"></canvas></div>
+  </section>
+
+  <script src="/app.js"></script>
+</body>
+</html>

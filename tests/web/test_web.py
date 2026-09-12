@@ -1,0 +1,84 @@
+from unittest import mock
+
+import pytest
+from fastapi import HTTPException
+
+from benchweave.adc.protocol import IdentifyInfo
+from benchweave.web import app as web_app
+from benchweave.web.board import BoardManager
+
+
+class _FakeDriver:
+    def __init__(self) -> None:
+        self.opened = False
+        self.averaging = 0
+        self.channel_mask = 0x3F
+        self.streaming = False
+
+    def open(self, device: str, *, baud: int = 2_000_000, timeout: float = 1.0) -> None:
+        self.opened = True
+
+    def identify(self, *, timeout: float | None = None) -> IdentifyInfo:
+        return IdentifyInfo(1, 0, 2, 6, 12)
+
+    def set_averaging(self, n: int, *, timeout: float | None = None) -> None:
+        self.averaging = n
+
+    def set_channels(self, mask: int, *, timeout: float | None = None) -> None:
+        self.channel_mask = mask
+
+    def start_stream(self, *, timeout: float | None = None) -> None:
+        self.streaming = True
+
+    def stop_stream(self, *, timeout: float | None = None) -> None:
+        self.streaming = False
+
+    def close(self) -> None:
+        self.opened = False
+
+
+def test_board_connect_status_and_config() -> None:
+    with mock.patch("benchweave.web.board.AdcDriver", _FakeDriver):
+        manager = BoardManager()
+        assert manager.status()["connected"] is False
+
+        manager.connect("/dev/ttyACM2")
+        status = manager.status()
+        assert status["connected"] is True
+        assert status["firmware"] == "0.2"
+        assert status["streaming"] is False
+
+        manager.set_averaging(16)
+        assert manager.status()["averaging"] == 16
+
+        manager.set_channels(0x0F)
+        assert manager.status()["channel_mask"] == 0x0F
+
+
+def test_board_rejects_config_while_streaming() -> None:
+    with mock.patch("benchweave.web.board.AdcDriver", _FakeDriver):
+        manager = BoardManager()
+        manager.connect("/dev/ttyACM2")
+        manager._streaming = True  # simulate an active stream
+
+        with pytest.raises(RuntimeError, match="stop streaming"):
+            manager.set_averaging(4)
+
+
+def test_board_rejects_control_when_disconnected() -> None:
+    with mock.patch("benchweave.web.board.AdcDriver", _FakeDriver):
+        manager = BoardManager()
+        with pytest.raises(RuntimeError, match="no ADC board connected"):
+            manager.start_stream()
+
+
+def test_api_rejects_invalid_averaging() -> None:
+    with pytest.raises(HTTPException) as excinfo:
+        web_app.set_averaging(web_app.AveragingBody(n=3))
+    assert excinfo.value.status_code == 422
+
+
+def test_api_rejects_invalid_channel_mask() -> None:
+    with pytest.raises(HTTPException) as excinfo:
+        web_app.set_channels(web_app.ChannelsBody(mask=0x40))
+    assert excinfo.value.status_code == 422
