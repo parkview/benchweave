@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 
 from serial.tools import list_ports  # type: ignore[import-untyped]
 
@@ -35,6 +36,13 @@ def adc_capture_filename(serial: str | None, *, ext: str = "csv") -> str:
     """Build a descriptive capture filename: ``adc_<serial>_<YYYYmmdd_HHMMSS>.<ext>``."""
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     return f"adc_{serial or 'unknown'}_{stamp}.{ext}"
+
+
+def capture_dir() -> Path:
+    """Return (and create) this plugin's ``captures/`` directory."""
+    path = Path(__file__).parent / "captures"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def serial_for_device(device: str) -> str:

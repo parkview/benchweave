@@ -8,13 +8,13 @@ import threading
 import time
 from contextlib import suppress
 from datetime import datetime
-from pathlib import Path
 
 from plugins.adc_6ch_12bit import (
     CHANNEL_MASK_ALL,
     AdcDriver,
     Sample,
     adc_capture_filename,
+    capture_dir,
     discover_adc_boards,
     serial_for_device,
 )
@@ -145,8 +145,7 @@ class BoardManager:
                 self._driver.start_stream()
                 self._streaming = True
                 if record:
-                    Path("captures").mkdir(parents=True, exist_ok=True)
-                    path = Path("captures") / adc_capture_filename(self._serial)
+                    path = capture_dir() / adc_capture_filename(self._serial)
                     self._recorder = _Recorder(str(path))
                 else:
                     self._recorder = None

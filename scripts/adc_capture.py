@@ -16,12 +16,12 @@ import csv
 import sys
 import time
 from datetime import datetime
-from pathlib import Path
 
 from plugins.adc_6ch_12bit import (
     AVERAGING_CHOICES,
     AdcDriver,
     adc_capture_filename,
+    capture_dir,
     discover_adc_boards,
     serial_for_device,
 )
@@ -38,7 +38,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         default=None,
-        help="CSV path (default: captures/adc_<serial>_<timestamp>.csv)",
+        help="CSV path (default: the plugin's captures/ directory)",
     )
     return parser.parse_args()
 
@@ -65,11 +65,7 @@ def main() -> int:
     else:
         serial = serial_for_device(port)
 
-    if args.output:
-        output = args.output
-    else:
-        Path("captures").mkdir(parents=True, exist_ok=True)
-        output = str(Path("captures") / adc_capture_filename(serial))
+    output = args.output or str(capture_dir() / adc_capture_filename(serial))
 
     driver = AdcDriver()
     driver.open(port, baud=args.baud)

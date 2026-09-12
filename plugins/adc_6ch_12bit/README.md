@@ -68,13 +68,13 @@ driver.close()
 
 Discover/connect, configure averaging + channels, start/stop streaming, and a
 live 6-channel graph (SSE). Optionally records to
-`captures/adc_<serial>_<timestamp>.csv`.
+`plugins/adc_6ch_12bit/captures/adc_<serial>_<timestamp>.csv`.
 
 ### CSV capture
 
 ```sh
 uv run scripts/adc_capture.py --seconds 5 --averaging 16
-# -> captures/adc_<serial>_<timestamp>.csv
+# -> plugins/adc_6ch_12bit/captures/adc_<serial>_<timestamp>.csv
 ```
 
 ## Firmware
@@ -87,3 +87,40 @@ Build from the CLI with `make` (uses the MRS-bundled `riscv-wch-elf-gcc` toolcha
 - 6× WS2812 status LEDs (one per channel, data line PB1; green = active @15%,
   red = inactive).
 - Timer-triggered ("cycle") sampling and external trigger.
+
+## For AI agents
+
+Context for a fresh AI session continuing work on this module. Read this, then
+the linked spec, before changing anything.
+
+**What this is:** a Python master driver for a 6-channel, 12-bit ADC board
+(WCH CH32V006E8R + CH343G USB-UART) speaking a custom binary protocol over UART
+at 2 Mbps. Host is the master: it sends commands, the board replies or streams.
+
+**Layout:**
+- `plugins/adc_6ch_12bit/` — this plugin (`protocol.py` codec, `driver.py`,
+  `discovery.py`).
+- `firmware/ch32v006e8r_adc/` — matching CH32V006 firmware (C; `make`).
+- `src/benchweave/web/` — FastAPI frontend (REST + SSE + live graph).
+- `scripts/adc_capture.py` / `scripts/run_adc_web.sh` — CLI capture / web launcher.
+- `tests/adc/`, `tests/web/` — tests.
+- `docs/superpowers/specs/2026-09-11-adc-board-uart-driver-design.md` — the
+  wire-protocol spec (**source of truth**).
+
+**Protocol (summary):** `[0xAA 0x55][type][seq][len][payload][CRC16 LE]`,
+CRC-16/CCITT-FALSE over type..payload. Commands: `identify`, `set_averaging`,
+`set_channels`, `set_sample_mode`, `start_stream`, `stop_stream`, `sample_once`,
+`reset`; responses `ACK`/`NAK`/`IDENTIFY_RSP`; data `SAMPLE` = u32 counter +
+6× u16. Averaging ∈ `{0,4,8,16,32,64,128,256}`. `protocol.py` and firmware
+`main.c` must stay byte-compatible.
+
+**Conventions:**
+- Wire-protocol changes go in the spec first, then both ends together.
+- Python: ruff (line-length 100) + mypy strict + pytest — run
+  `uv run pytest`, `uv run ruff check .`, `uv run mypy`.
+- Firmware: `make -C firmware/ch32v006e8r_adc`.
+- Captured data goes to `plugins/adc_6ch_12bit/captures/` (gitignored).
+
+**Deferred work (next):** 6× WS2812 status LEDs (PB1, green=active @15% /
+red=inactive, blocking refresh during config only); timer-triggered "cycle"
+sampling and external trigger (commands reserved, firmware NAKs them for now).

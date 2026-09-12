@@ -3,6 +3,7 @@
 from .discovery import (
     AdcBoard,
     adc_capture_filename,
+    capture_dir,
     discover_adc_boards,
     serial_for_device,
 )
@@ -33,6 +34,7 @@ __all__ = [
     "Sample",
     "AdcBoard",
     "adc_capture_filename",
+    "capture_dir",
     "discover_adc_boards",
     "serial_for_device",
     "AVERAGING_CHOICES",
