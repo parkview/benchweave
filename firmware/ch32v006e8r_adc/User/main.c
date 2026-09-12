@@ -28,6 +28,8 @@
 #include "debug.h"
 #include <stdint.h>
 
+#include "ws2812.h"
+
 /* ── Frame types ─────────────────────────────────────────────────────────── */
 #define TYPE_SET_AVERAGING   0x01
 #define TYPE_SET_CHANNELS    0x02
@@ -60,12 +62,6 @@
 
 /* ── GPIO ────────────────────────────────────────────────────────────────── */
 #define LED_PIN             GPIO_Pin_1 /* PC1 green LED */
-
-/* ToDo (deferred): drive the 6x WS2812 status LEDs on PB1, one per port.
- *   Address 0 = A0 .. 5 = A7. Green = active (15% brightness), red = inactive.
- *   Blocking refresh during hardware-config only, before the streaming loop.
- *   Reuse GD_WS2812_DRIVER.h (adapt num_leds=6, [6][3] RGB buffer, PB1).
- *   See spec "Deferred firmware features". */
 
 /* ── Sampling state ──────────────────────────────────────────────────────── */
 #define STREAM_IDLE         0
@@ -326,6 +322,7 @@ static void handle_frame(uint8_t type, const uint8_t *payload, uint8_t len) {
     case TYPE_SET_CHANNELS:
         if (len >= 1 && payload[0] <= 0x3F) {
             channel_mask = payload[0];
+            ws2812_set_channels(channel_mask);
             send_ack(type, (uint16_t)payload[0]);
         } else {
             send_nak(type, ERR_BAD_PARAMETER);
@@ -505,8 +502,10 @@ int main(void) {
     gpio_analog_init();
     adc_init_12bit();
     usart_init_2m();
+    ws2812_init();
 
     led_boot_blink();
+    ws2812_set_channels(channel_mask);
 
     while (1) {
         /* 1. Drain RX ring buffer through the frame state machine. */
