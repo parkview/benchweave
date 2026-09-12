@@ -33,6 +33,7 @@ dev = [
   "mypy>=1.11",
   "jsonschema>=4.23",
   "referencing>=0.35",
+  "pytest-timeout>=2.3",
 ]
 
 [project.scripts]

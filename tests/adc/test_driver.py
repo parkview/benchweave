@@ -203,6 +203,7 @@ def test_sample_once() -> None:
     driver.close()
 
 
+@pytest.mark.timeout(5)
 def test_stream_and_iter_samples() -> None:
     fake = FakeTransport()
 
@@ -225,6 +226,7 @@ def test_stream_and_iter_samples() -> None:
     driver.close()
 
 
+@pytest.mark.timeout(5)
 def test_stream_recovers_after_garbage() -> None:
     fake = FakeTransport()
 
