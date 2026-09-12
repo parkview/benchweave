@@ -1,6 +1,7 @@
 "use strict";
 
 const CHANNEL_NAMES = ["a0", "a1", "a2", "a3", "a4", "a7"];
+const CHANNEL_KEYS = ["A0", "A1", "A2", "A3", "A4", "A7"];
 const COLORS = ["#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4", "#f032e6"];
 const MAX_POINTS = 300;
 
@@ -101,7 +102,7 @@ async function connect() {
 
 async function refreshStatus() {
   const s = await api("/api/status");
-  document.getElementById("config").hidden = !s.connected;
+  document.getElementById("control").hidden = !s.connected;
   const averaging = document.getElementById("averaging");
   averaging.value = String(s.averaging);
   averaging.disabled = s.streaming;
@@ -202,6 +203,90 @@ function openEventSource() {
   };
 }
 
+// -- Configuration tab ------------------------------------------------------
+
+let currentConfig = null;
+
+function switchTab(name) {
+  document.querySelectorAll(".tab").forEach((t) => {
+    t.classList.toggle("active", t.dataset.tab === name);
+  });
+  document.getElementById("tab-control").hidden = name !== "control";
+  document.getElementById("tab-setup").hidden = name !== "setup";
+  if (name === "setup") loadConfig();
+}
+
+async function loadConfig() {
+  try {
+    currentConfig = await api("/api/config");
+    renderProfileSelect();
+    renderChannelTable();
+    document.getElementById("config-status").textContent = "";
+  } catch (e) {
+    document.getElementById("config-status").textContent = "load error: " + e.message;
+  }
+}
+
+function renderProfileSelect() {
+  const select = document.getElementById("profile-select");
+  select.innerHTML = "";
+  Object.keys(currentConfig.profiles).forEach((name) => {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = name;
+    select.appendChild(opt);
+  });
+  select.value = currentConfig.active_profile;
+}
+
+function renderChannelTable() {
+  const tbody = document.querySelector("#channel-table tbody");
+  tbody.innerHTML = "";
+  const profile = currentConfig.profiles[currentConfig.active_profile];
+  CHANNEL_KEYS.forEach((key) => {
+    const ch = profile.channels[key];
+    const tr = document.createElement("tr");
+    tr.innerHTML =
+      `<td>${key}</td>` +
+      `<td><input type="text" data-key="${key}" data-field="name" value="${ch.name}"></td>` +
+      `<td><input type="text" data-key="${key}" data-field="unit" value="${ch.unit}"></td>` +
+      `<td><input type="number" step="any" data-key="${key}" data-field="gain" value="${ch.gain}"></td>` +
+      `<td><input type="number" step="any" data-key="${key}" data-field="offset" value="${ch.offset}"></td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+function onProfileChange() {
+  currentConfig.active_profile = document.getElementById("profile-select").value;
+  renderChannelTable();
+}
+
+async function onSaveConfig() {
+  const profile = currentConfig.profiles[currentConfig.active_profile];
+  CHANNEL_KEYS.forEach((key) => {
+    const ch = profile.channels[key];
+    ch.name = document.querySelector(`input[data-key="${key}"][data-field="name"]`).value;
+    ch.unit = document.querySelector(`input[data-key="${key}"][data-field="unit"]`).value;
+    ch.gain = parseFloat(
+      document.querySelector(`input[data-key="${key}"][data-field="gain"]`).value
+    );
+    ch.offset = parseFloat(
+      document.querySelector(`input[data-key="${key}"][data-field="offset"]`).value
+    );
+  });
+  try {
+    currentConfig = await api("/api/config", {
+      method: "PUT",
+      body: JSON.stringify(currentConfig),
+    });
+    document.getElementById("config-status").textContent = "saved";
+    renderProfileSelect();
+    renderChannelTable();
+  } catch (e) {
+    document.getElementById("config-status").textContent = "save error: " + e.message;
+  }
+}
+
 // -- Wire up ----------------------------------------------------------------
 
 window.addEventListener("DOMContentLoaded", () => {
@@ -211,5 +296,10 @@ window.addEventListener("DOMContentLoaded", () => {
   document.getElementById("connect-btn").addEventListener("click", connect);
   document.getElementById("averaging").addEventListener("change", onAveragingChange);
   document.getElementById("stream-toggle").addEventListener("click", onStreamToggle);
+  document.querySelectorAll(".tab").forEach((t) =>
+    t.addEventListener("click", () => switchTab(t.dataset.tab))
+  );
+  document.getElementById("profile-select").addEventListener("change", onProfileChange);
+  document.getElementById("save-config").addEventListener("click", onSaveConfig);
   discover();
 });
