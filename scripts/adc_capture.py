@@ -16,6 +16,7 @@ import csv
 import sys
 import time
 from datetime import datetime
+from pathlib import Path
 
 from benchweave.adc import (
     AVERAGING_CHOICES,
@@ -37,7 +38,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         default=None,
-        help="CSV path (default: adc_<serial>_<timestamp>.csv in the current dir)",
+        help="CSV path (default: captures/adc_<serial>_<timestamp>.csv)",
     )
     return parser.parse_args()
 
@@ -64,7 +65,11 @@ def main() -> int:
     else:
         serial = serial_for_device(port)
 
-    output = args.output or adc_capture_filename(serial)
+    if args.output:
+        output = args.output
+    else:
+        Path("captures").mkdir(parents=True, exist_ok=True)
+        output = str(Path("captures") / adc_capture_filename(serial))
 
     driver = AdcDriver()
     driver.open(port, baud=args.baud)

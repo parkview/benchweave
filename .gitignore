@@ -26,6 +26,7 @@ junit*.xml
 firmware/**/obj/
 
 # Captured ADC data
+captures/
 adc_*.csv
 
 # Local configuration and credentials; keep shareable templates

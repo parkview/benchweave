@@ -8,6 +8,7 @@ import threading
 import time
 from contextlib import suppress
 from datetime import datetime
+from pathlib import Path
 
 from benchweave.adc import (
     CHANNEL_MASK_ALL,
@@ -143,7 +144,12 @@ class BoardManager:
             if not self._streaming:
                 self._driver.start_stream()
                 self._streaming = True
-                self._recorder = _Recorder(adc_capture_filename(self._serial)) if record else None
+                if record:
+                    Path("captures").mkdir(parents=True, exist_ok=True)
+                    path = Path("captures") / adc_capture_filename(self._serial)
+                    self._recorder = _Recorder(str(path))
+                else:
+                    self._recorder = None
                 self._record_path = self._recorder.path if self._recorder else None
                 self._recording = record
                 self._worker = threading.Thread(
