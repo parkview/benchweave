@@ -174,3 +174,74 @@ def test_reopen_after_fault_recovers() -> None:
     driver.open()
     assert driver.identify() == IdentifyInfo(1, 0, 0, 6, 12)
     driver.close()
+
+
+def sample_payload(counter: int, channels: tuple[int, ...]) -> bytes:
+    return counter.to_bytes(4, "little") + b"".join(c.to_bytes(2, "little") for c in channels)
+
+
+def test_sample_once() -> None:
+    fake = FakeTransport()
+
+    def respond(data: bytes) -> None:
+        for f in FrameParser().feed(data):
+            if f.type == FrameType.SAMPLE_ONCE:
+                fake.push(ack(FrameType.SAMPLE_ONCE))
+                fake.push(
+                    encode_frame(
+                        Frame(FrameType.SAMPLE, 0, sample_payload(42, (0, 2, 4, 6, 8, 10)))
+                    )
+                )
+
+    fake.responder = respond
+    driver = AdcDriver(transport=fake)
+    driver.open()
+    sample = driver.sample_once()
+    assert sample.counter == 42
+    assert sample.channels == (0, 2, 4, 6, 8, 10)
+    assert sample.averaged_n == 0
+    driver.close()
+
+
+def test_stream_and_iter_samples() -> None:
+    fake = FakeTransport()
+
+    def respond(data: bytes) -> None:
+        for f in FrameParser().feed(data):
+            if f.type == FrameType.START_STREAM:
+                fake.push(ack(FrameType.START_STREAM))
+            elif f.type == FrameType.STOP_STREAM:
+                fake.push(ack(FrameType.STOP_STREAM))
+
+    fake.responder = respond
+    driver = AdcDriver(transport=fake)
+    driver.open()
+    driver.start_stream()
+    fake.push(encode_frame(Frame(FrameType.SAMPLE, 0, sample_payload(7, (0, 1, 2, 3, 4, 5)))))
+    sample = next(driver.iter_samples())
+    assert sample.counter == 7
+    assert sample.channels == (0, 1, 2, 3, 4, 5)
+    driver.stop_stream()
+    driver.close()
+
+
+def test_stream_recovers_after_garbage() -> None:
+    fake = FakeTransport()
+
+    def respond(data: bytes) -> None:
+        for f in FrameParser().feed(data):
+            if f.type == FrameType.START_STREAM:
+                fake.push(ack(FrameType.START_STREAM))
+
+    fake.responder = respond
+    driver = AdcDriver(transport=fake)
+    driver.open()
+    driver.start_stream()
+    fake.push(
+        b"\x99\x88"
+        + encode_frame(Frame(FrameType.SAMPLE, 0, sample_payload(1, (1, 2, 3, 4, 5, 6))))
+    )
+    sample = next(driver.iter_samples())
+    assert sample.counter == 1
+    assert sample.channels == (1, 2, 3, 4, 5, 6)
+    driver.close()
