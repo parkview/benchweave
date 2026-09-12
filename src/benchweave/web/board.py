@@ -8,6 +8,7 @@ import threading
 import time
 from contextlib import suppress
 from datetime import datetime
+from typing import Any
 
 from plugins.adc_6ch_12bit import (
     CHANNEL_MASK_ALL,
@@ -15,7 +16,10 @@ from plugins.adc_6ch_12bit import (
     Sample,
     adc_capture_filename,
     capture_dir,
+    convert_channels,
     discover_adc_boards,
+    load_config,
+    save_config,
     serial_for_device,
 )
 
@@ -63,6 +67,7 @@ class BoardManager:
         self._fw_minor: int | None = None
         self._averaging = 0
         self._channel_mask = CHANNEL_MASK_ALL
+        self._config = load_config()
         self._streaming = False
         self._recording = False
         self._recorder: _Recorder | None = None
@@ -127,6 +132,19 @@ class BoardManager:
             "recording": self._recording,
             "record_path": self._record_path,
         }
+
+    # -- config --------------------------------------------------------------
+
+    def get_config(self) -> dict[str, Any]:
+        return self._config
+
+    def set_config(self, config: dict[str, Any]) -> dict[str, Any]:
+        self._config = config
+        save_config(config)
+        return self._config
+
+    def convert_sample(self, sample: Sample) -> list[dict[str, object]]:
+        return convert_channels(sample, self._config)
 
     # -- control -------------------------------------------------------------
 

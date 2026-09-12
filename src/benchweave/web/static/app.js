@@ -36,7 +36,7 @@ function initChart() {
 
 function addSample(counter, channels) {
   chart.data.datasets.forEach((ds, i) => {
-    ds.data.push({ x: counter, y: channels[i] });
+    ds.data.push({ x: counter, y: channels[i].value });
     if (ds.data.length > MAX_POINTS) ds.data.shift();
   });
   chart.update();

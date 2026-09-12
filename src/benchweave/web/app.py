@@ -8,6 +8,7 @@ import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -67,6 +68,19 @@ def status() -> dict[str, object]:
     return manager.status()
 
 
+@app.get("/api/config")
+def get_config() -> dict[str, Any]:
+    return manager.get_config()
+
+
+@app.put("/api/config")
+def put_config(body: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return manager.set_config(body)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.post("/api/averaging")
 def set_averaging(body: AveragingBody) -> dict[str, object]:
     if body.n not in AVERAGING_CHOICES:
@@ -123,7 +137,7 @@ async def stream(request: Request) -> StreamingResponse:
                 payload = {
                     "counter": sample.counter,
                     "averaged_n": sample.averaged_n,
-                    "channels": list(sample.channels),
+                    "channels": manager.convert_sample(sample),
                 }
                 yield f"data: {json.dumps(payload)}\n\n"
         finally:

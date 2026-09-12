@@ -29,6 +29,9 @@ firmware/**/obj/
 captures/
 adc_*.csv
 
+# Runtime-editable ADC channel config
+plugins/adc_6ch_12bit/config.json
+
 # Local configuration and credentials; keep shareable templates
 .env
 .env.*

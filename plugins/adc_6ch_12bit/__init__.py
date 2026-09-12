@@ -1,5 +1,12 @@
 """6-channel ADC board serial driver (master side)."""
 
+from .config import (
+    CHANNEL_KEYS,
+    DEFAULT_CONFIG,
+    convert_channels,
+    load_config,
+    save_config,
+)
 from .discovery import (
     AdcBoard,
     adc_capture_filename,
@@ -35,10 +42,15 @@ __all__ = [
     "AdcBoard",
     "adc_capture_filename",
     "capture_dir",
+    "convert_channels",
     "discover_adc_boards",
+    "load_config",
+    "save_config",
     "serial_for_device",
     "AVERAGING_CHOICES",
+    "CHANNEL_KEYS",
     "CHANNEL_MASK_ALL",
+    "DEFAULT_CONFIG",
     "FrameType",
     "IdentifyInfo",
     "SampleMode",
