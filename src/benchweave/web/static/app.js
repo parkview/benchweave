@@ -14,14 +14,15 @@ function initChart() {
   chart = new Chart(document.getElementById("chart"), {
     type: "line",
     data: {
-      datasets: CHANNEL_NAMES.map((name, i) => ({
-        label: name,
+      datasets: CHANNEL_KEYS.map((key, i) => ({
+        label: key,
         data: [],
         borderColor: COLORS[i],
         backgroundColor: COLORS[i],
         borderWidth: 1,
         pointRadius: 0,
         parsing: false,
+        yAxisID: "y",
       })),
     },
     options: {
@@ -29,10 +30,32 @@ function initChart() {
       interaction: { mode: "nearest", intersect: false },
       scales: {
         x: { type: "linear", title: { display: true, text: "sample counter" } },
-        y: { min: 0, max: 4095, title: { display: true, text: "raw (12-bit)" } },
+        y: {
+          type: "linear",
+          beginAtZero: true,
+          title: { display: true, text: "voltage (V)" },
+        },
+        y2: {
+          type: "linear",
+          position: "right",
+          beginAtZero: true,
+          grid: { drawOnChartArea: false },
+          title: { display: true, text: "current (A)" },
+        },
       },
     },
   });
+}
+
+function updateChart() {
+  if (!chart || !currentConfig) return;
+  const profile = currentConfig.profiles[currentConfig.active_profile];
+  CHANNEL_KEYS.forEach((key, i) => {
+    const ch = profile.channels[key];
+    chart.data.datasets[i].label = ch.name;
+    chart.data.datasets[i].yAxisID = ch.unit === "A" ? "y2" : "y";
+  });
+  chart.update();
 }
 
 function addSample(counter, channels) {
@@ -221,6 +244,7 @@ async function loadConfig() {
     currentConfig = await api("/api/config");
     renderProfileSelect();
     renderChannelTable();
+    updateChart();
     document.getElementById("config-status").textContent = "";
   } catch (e) {
     document.getElementById("config-status").textContent = "load error: " + e.message;
@@ -282,6 +306,7 @@ async function onSaveConfig() {
     document.getElementById("config-status").textContent = "saved";
     renderProfileSelect();
     renderChannelTable();
+    updateChart();
   } catch (e) {
     document.getElementById("config-status").textContent = "save error: " + e.message;
   }
@@ -291,6 +316,7 @@ async function onSaveConfig() {
 
 window.addEventListener("DOMContentLoaded", () => {
   initChart();
+  loadConfig();
   buildChannelCheckboxes();
   document.getElementById("discover-btn").addEventListener("click", discover);
   document.getElementById("connect-btn").addEventListener("click", connect);
