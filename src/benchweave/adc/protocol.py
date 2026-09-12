@@ -128,3 +128,55 @@ class FrameParser:
         return Frame(
             type=frame_bytes[2], seq=frame_bytes[3], payload=frame_bytes[5 : HEADER_LEN + length]
         )
+
+
+def build_set_averaging(n: int) -> bytes:
+    if n not in AVERAGING_CHOICES:
+        raise ValueError(f"averaging must be one of {AVERAGING_CHOICES}")
+    return n.to_bytes(2, "little")
+
+
+def build_set_channels(mask: int) -> bytes:
+    if not 0 <= mask <= CHANNEL_MASK_ALL:
+        raise ValueError(f"channel mask out of range: {mask}")
+    return bytes((mask,))
+
+
+def build_set_sample_mode(mode: int) -> bytes:
+    if mode not in (SampleMode.FREE_RUN, SampleMode.CYCLE):
+        raise ValueError(f"invalid sample mode: {mode}")
+    return bytes((mode,))
+
+
+def parse_ack(payload: bytes) -> tuple[int, int]:
+    if len(payload) < 3:
+        raise ValueError("short ACK payload")
+    return payload[0], int.from_bytes(payload[1:3], "little")
+
+
+def parse_nak(payload: bytes) -> tuple[int, int]:
+    if len(payload) < 2:
+        raise ValueError("short NAK payload")
+    return payload[0], payload[1]
+
+
+def parse_identify(payload: bytes) -> IdentifyInfo:
+    if len(payload) < 5:
+        raise ValueError("short IDENTIFY payload")
+    return IdentifyInfo(
+        proto_version=payload[0],
+        fw_major=payload[1],
+        fw_minor=payload[2],
+        n_channels=payload[3],
+        resolution=payload[4],
+    )
+
+
+def parse_sample(payload: bytes) -> tuple[int, tuple[int, ...]]:
+    if len(payload) < 4 + 2 * N_CHANNELS:
+        raise ValueError("short SAMPLE payload")
+    counter = int.from_bytes(payload[0:4], "little")
+    channels = tuple(
+        int.from_bytes(payload[4 + 2 * i : 6 + 2 * i], "little") for i in range(N_CHANNELS)
+    )
+    return counter, channels

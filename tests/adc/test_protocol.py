@@ -2,7 +2,23 @@ from __future__ import annotations
 
 import pytest
 
-from benchweave.adc.protocol import Frame, FrameParser, FrameType, crc16, encode_frame
+from benchweave.adc.protocol import (
+    CHANNEL_MASK_ALL,
+    Frame,
+    FrameParser,
+    FrameType,
+    IdentifyInfo,
+    SampleMode,
+    build_set_averaging,
+    build_set_channels,
+    build_set_sample_mode,
+    crc16,
+    encode_frame,
+    parse_ack,
+    parse_identify,
+    parse_nak,
+    parse_sample,
+)
 
 
 def test_crc16_check_vector() -> None:
@@ -49,3 +65,41 @@ def test_parser_drops_corrupt_frame() -> None:
     assert parser.error_count >= 1
     good = Frame(type=FrameType.SAMPLE, seq=2, payload=b"\x01" * 16)
     assert parser.feed(encode_frame(good)) == [good]
+
+
+def test_build_set_averaging() -> None:
+    assert build_set_averaging(64) == (64).to_bytes(2, "little")
+    assert build_set_averaging(0) == b"\x00\x00"
+    with pytest.raises(ValueError):
+        build_set_averaging(3)
+
+
+def test_build_set_channels() -> None:
+    assert build_set_channels(CHANNEL_MASK_ALL) == b"\x3f"
+    with pytest.raises(ValueError):
+        build_set_channels(0x40)
+
+
+def test_build_set_sample_mode() -> None:
+    assert build_set_sample_mode(SampleMode.FREE_RUN) == b"\x00"
+    with pytest.raises(ValueError):
+        build_set_sample_mode(9)
+
+
+def test_parse_ack() -> None:
+    assert parse_ack(bytes([FrameType.SET_AVERAGING, 0x20, 0x00])) == (FrameType.SET_AVERAGING, 32)
+
+
+def test_parse_nak() -> None:
+    assert parse_nak(bytes([FrameType.START_STREAM, 0x03])) == (FrameType.START_STREAM, 3)
+
+
+def test_parse_identify() -> None:
+    assert parse_identify(bytes([1, 0, 2, 6, 12])) == IdentifyInfo(1, 0, 2, 6, 12)
+
+
+def test_parse_sample() -> None:
+    counter = 0x00010203
+    channels = (0, 1, 2, 3, 4, 5)
+    payload = counter.to_bytes(4, "little") + b"".join(c.to_bytes(2, "little") for c in channels)
+    assert parse_sample(payload) == (counter, channels)
