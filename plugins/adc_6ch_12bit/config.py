@@ -19,13 +19,22 @@ CONFIG_PATH = Path(__file__).parent / "config.json"
 # Volts per 12-bit count at a 5.0 V reference: 5.0 / 4095.
 _DEFAULT_GAIN = 0.001221
 
+PALETTE = ("#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4", "#f032e6")
+
 DEFAULT_CONFIG: dict[str, Any] = {
     "active_profile": "default",
     "profiles": {
         "default": {
             "channels": {
-                key: {"name": key, "unit": "V", "gain": _DEFAULT_GAIN, "offset": 0.0, "show": True}
-                for key in CHANNEL_KEYS
+                key: {
+                    "name": key,
+                    "unit": "V",
+                    "gain": _DEFAULT_GAIN,
+                    "offset": 0.0,
+                    "show": True,
+                    "color": PALETTE[i],
+                }
+                for i, key in enumerate(CHANNEL_KEYS)
             },
             "computed": [],
         }

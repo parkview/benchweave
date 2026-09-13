@@ -59,12 +59,18 @@ function updateChart() {
 
   CHANNEL_KEYS.forEach((key, i) => {
     const ch = profile.channels[key];
+    const color = ch.color || COLORS[i % COLORS.length];
     chart.data.datasets[i].label = ch.name;
+    chart.data.datasets[i].borderColor = color;
+    chart.data.datasets[i].backgroundColor = color;
     chart.data.datasets[i].yAxisID = ch.unit === "A" ? "y2" : "y";
   });
   computed.forEach((comp, i) => {
     const ds = chart.data.datasets[CHANNEL_KEYS.length + i];
+    const color = comp.color || COLORS[(CHANNEL_KEYS.length + i) % COLORS.length];
     ds.label = comp.name;
+    ds.borderColor = color;
+    ds.backgroundColor = color;
     ds.yAxisID = comp.unit === "A" ? "y2" : "y";
   });
   chart.update();
@@ -283,7 +289,7 @@ function renderChannelTable() {
   const tbody = document.querySelector("#channel-table tbody");
   tbody.innerHTML = "";
   const profile = currentConfig.profiles[currentConfig.active_profile];
-  CHANNEL_KEYS.forEach((key) => {
+  CHANNEL_KEYS.forEach((key, i) => {
     const ch = profile.channels[key];
     const tr = document.createElement("tr");
     tr.innerHTML =
@@ -292,6 +298,9 @@ function renderChannelTable() {
       `<td><input type="text" data-key="${key}" data-field="unit" value="${ch.unit}"></td>` +
       `<td><input type="number" step="any" data-key="${key}" data-field="gain" value="${ch.gain}"></td>` +
       `<td><input type="number" step="any" data-key="${key}" data-field="offset" value="${ch.offset}"></td>` +
+      `<td><input type="color" data-key="${key}" data-field="color" value="${
+        ch.color || COLORS[i % COLORS.length]
+      }"></td>` +
       `<td><input type="checkbox" data-key="${key}" data-field="show"${
         ch.show === false ? "" : " checked"
       }></td>`;
@@ -319,12 +328,14 @@ async function onSaveConfig() {
       document.querySelector(`input[data-key="${key}"][data-field="offset"]`).value
     );
     ch.show = document.querySelector(`input[data-key="${key}"][data-field="show"]`).checked;
+    ch.color = document.querySelector(`input[data-key="${key}"][data-field="color"]`).value;
   });
   profile.computed = (profile.computed || []).map((_, i) => ({
     name: document.querySelector(`#computed-table input[data-index="${i}"][data-field="name"]`).value,
     unit: document.querySelector(`#computed-table input[data-index="${i}"][data-field="unit"]`).value,
     expr: document.querySelector(`#computed-table input[data-index="${i}"][data-field="expr"]`).value,
     show: document.querySelector(`#computed-table input[data-index="${i}"][data-field="show"]`).checked,
+    color: document.querySelector(`#computed-table input[data-index="${i}"][data-field="color"]`).value,
   }));
   try {
     currentConfig = await api("/api/config", {
@@ -351,6 +362,9 @@ function renderComputedTable() {
       `<td><input type="text" data-index="${i}" data-field="name" value="${comp.name || ""}"></td>` +
       `<td><input type="text" data-index="${i}" data-field="unit" value="${comp.unit || ""}"></td>` +
       `<td><input type="text" data-index="${i}" data-field="expr" value="${comp.expr || ""}"></td>` +
+      `<td><input type="color" data-index="${i}" data-field="color" value="${
+        comp.color || COLORS[(CHANNEL_KEYS.length + i) % COLORS.length]
+      }"></td>` +
       `<td><input type="checkbox" data-index="${i}" data-field="show"${
         comp.show === false ? "" : " checked"
       }></td>` +
@@ -377,7 +391,13 @@ function onNewProfile() {
 function onAddComputed() {
   const profile = currentConfig.profiles[currentConfig.active_profile];
   profile.computed = profile.computed || [];
-  profile.computed.push({ name: "", unit: "A", expr: "" });
+  const i = profile.computed.length;
+  profile.computed.push({
+    name: "",
+    unit: "A",
+    expr: "",
+    color: COLORS[(CHANNEL_KEYS.length + i) % COLORS.length],
+  });
   renderComputedTable();
 }
 

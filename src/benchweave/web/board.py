@@ -155,9 +155,13 @@ class BoardManager:
             metadata.append(f"note: {note}")
         for key in CHANNEL_KEYS:
             ch = profile["channels"][key]
+            if not ch.get("show", True):
+                continue
             names.append(str(ch["name"]))
             metadata.append(f"{key}: {ch['name']} ({ch['unit']})")
         for comp in profile.get("computed", []):
+            if not comp.get("show", True):
+                continue
             names.append(str(comp["name"]))
             metadata.append(f"computed: {comp['name']} ({comp['unit']}) = {comp['expr']}")
         return names, metadata
