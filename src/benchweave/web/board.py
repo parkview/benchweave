@@ -40,20 +40,31 @@ class _Recorder:
         for line in metadata:
             self._file.write(f"# {line}\n")
         self._writer = csv.writer(self._file)
-        self._writer.writerow(["timestamp", "elapsed_s", "counter", "averaged_n", *column_names])
+        self._writer.writerow(
+            ["timestamp", "elapsed_s", "actual_sps", "counter", "averaged_n", *column_names]
+        )
         self._t0 = time.monotonic()
         self._interval = interval  # seconds between records; 0 = no throttle
         self._last_write = 0.0
+        self._last_elapsed: float | None = None
 
     def write(self, counter: int, averaged_n: int, values: list[object]) -> None:
         now = time.monotonic()
         if self._interval > 0.0 and now - self._last_write < self._interval:
             return
+        elapsed = now - self._t0
+        if self._last_elapsed is None:
+            sps = 0.0
+        else:
+            delta = elapsed - self._last_elapsed
+            sps = round(1.0 / delta, 3) if delta > 0.0 else 0.0
+        self._last_elapsed = elapsed
         self._last_write = now
         self._writer.writerow(
             [
                 datetime.now().isoformat(timespec="microseconds"),
-                round(now - self._t0, 6),
+                round(elapsed, 6),
+                sps,
                 counter,
                 averaged_n,
                 *values,
