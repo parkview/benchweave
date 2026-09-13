@@ -19,6 +19,7 @@ from plugins.adc_6ch_12bit import (
     capture_dir,
     convert_channels,
     discover_adc_boards,
+    estimate_max_sps,
     load_config,
     save_config,
     serial_for_device,
@@ -154,6 +155,7 @@ class BoardManager:
             "streaming": self._streaming,
             "recording": self._recording,
             "record_path": self._record_path,
+            "max_sps": round(estimate_max_sps(self._averaging, self._channel_mask.bit_count()), 1),
         }
 
     # -- config --------------------------------------------------------------

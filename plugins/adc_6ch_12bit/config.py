@@ -127,3 +127,18 @@ def convert_channels(sample: Sample, config: dict[str, Any]) -> list[dict[str, o
                 }
             )
     return converted
+
+
+# Approximate per-channel ADC conversion time (us) and per-frame UART time (us),
+# used to estimate the maximum sample rate. Tuned from the measured raw rate.
+_CONVERSION_US = 31.6
+_FRAME_US = 115.0  # 23-byte SAMPLE frame at 2 Mbps
+
+
+def estimate_max_sps(averaging: int, n_channels: int) -> float:
+    """Estimate the maximum sample rate for the given averaging and channel count."""
+    if n_channels <= 0:
+        return 0.0
+    samples = 1 if averaging == 0 else averaging
+    per_sample_us = n_channels * samples * _CONVERSION_US + _FRAME_US
+    return 1_000_000.0 / per_sample_us

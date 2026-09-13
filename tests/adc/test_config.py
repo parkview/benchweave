@@ -8,6 +8,7 @@ from plugins.adc_6ch_12bit.config import (
     CHANNEL_KEYS,
     DEFAULT_CONFIG,
     convert_channels,
+    estimate_max_sps,
     evaluate_expr,
     load_config,
     save_config,
@@ -87,6 +88,15 @@ def test_convert_channels_with_computed() -> None:
     assert current["name"] == "Current"
     assert current["unit"] == "A"
     assert current["value"] == 10.0
+
+
+def test_estimate_max_sps() -> None:
+    raw_6 = estimate_max_sps(0, 6)
+    assert 3000 < raw_6 < 3500
+    # Higher averaging reduces the max rate.
+    assert estimate_max_sps(16, 6) < raw_6
+    # Fewer channels increases the max rate.
+    assert estimate_max_sps(0, 3) > raw_6
 
 
 def test_convert_channels_hides_show_false() -> None:

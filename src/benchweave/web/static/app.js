@@ -7,6 +7,8 @@ const MAX_POINTS = 300;
 
 let chart = null;
 let eventSource = null;
+let lastCounter = null;
+let lastCounterAt = 0;
 
 // -- Chart setup ------------------------------------------------------------
 
@@ -85,6 +87,16 @@ function addSample(counter, channels) {
     if (ds.data.length > MAX_POINTS) ds.data.shift();
   });
   chart.update();
+
+  // Live incoming rate, derived from the board's sample counter delta.
+  const now = performance.now();
+  if (lastCounter !== null && now > lastCounterAt) {
+    const rate = (counter - lastCounter) / ((now - lastCounterAt) / 1000);
+    document.getElementById("throughput").textContent =
+      Math.round(rate).toLocaleString() + " SPS";
+  }
+  lastCounter = counter;
+  lastCounterAt = now;
 }
 
 // -- API helpers ------------------------------------------------------------
@@ -269,6 +281,7 @@ async function loadConfig() {
     renderComputedTable();
     renderSettings();
     updateChart();
+    await updateMaxSps();
     document.getElementById("config-status").textContent = "";
   } catch (e) {
     document.getElementById("config-status").textContent = "load error: " + e.message;
@@ -384,6 +397,23 @@ function renderSettings() {
   const s = currentConfig.settings || {};
   const el = document.getElementById("sample-rate");
   el.value = s.sample_rate_hz == null ? "" : String(s.sample_rate_hz);
+}
+
+async function updateMaxSps() {
+  try {
+    const s = await api("/api/status");
+    const el = document.getElementById("max-sps");
+    const input = document.getElementById("sample-rate");
+    if (s.max_sps) {
+      el.textContent = `max ~${Math.round(s.max_sps)} Hz`;
+      input.max = String(Math.ceil(s.max_sps));
+    } else {
+      el.textContent = "";
+      input.removeAttribute("max");
+    }
+  } catch (e) {
+    // status unavailable; leave the max hint empty
+  }
 }
 
 function onNewProfile() {

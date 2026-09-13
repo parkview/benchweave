@@ -4,6 +4,7 @@ from .config import (
     CHANNEL_KEYS,
     DEFAULT_CONFIG,
     convert_channels,
+    estimate_max_sps,
     load_config,
     save_config,
 )
@@ -44,6 +45,7 @@ __all__ = [
     "capture_dir",
     "convert_channels",
     "discover_adc_boards",
+    "estimate_max_sps",
     "load_config",
     "save_config",
     "serial_for_device",
