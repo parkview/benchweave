@@ -7,6 +7,7 @@ import csv
 import threading
 import time
 from contextlib import suppress
+from dataclasses import replace
 from datetime import datetime
 from typing import Any
 
@@ -267,8 +268,14 @@ class BoardManager:
     def _stream_worker(self) -> None:
         loop = self._loop
         recorder = self._recorder
+        base: int | None = None
         try:
             for sample in self._driver.iter_samples():
+                # The firmware counter is board-lifetime and does not reset on
+                # START_STREAM, so rebase it to a per-stream counter starting at 0.
+                if base is None:
+                    base = sample.counter
+                sample = replace(sample, counter=sample.counter - base)
                 if recorder is not None:
                     channels = self.convert_sample(sample)
                     recorder.write(

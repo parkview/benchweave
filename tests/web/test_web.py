@@ -6,6 +6,7 @@ from fastapi import HTTPException
 from benchweave.web import app as web_app
 from benchweave.web.app import SSE_MIN_INTERVAL, _sse_interval
 from benchweave.web.board import BoardManager
+from plugins.adc_6ch_12bit.driver import Sample
 from plugins.adc_6ch_12bit.protocol import IdentifyInfo
 
 
@@ -118,3 +119,28 @@ def test_sse_interval_honours_sample_rate() -> None:
     assert _sse_interval({"settings": {"sample_rate_hz": 100}}) == pytest.approx(
         SSE_MIN_INTERVAL
     )
+
+
+def test_stream_worker_rebases_counter_per_stream() -> None:
+    manager = BoardManager()
+    manager._loop = None  # exercise the recording path only
+
+    written: list[int] = []
+
+    class _SpyRecorder:
+        def write(self, counter: int, averaged_n: int, values: list[object]) -> None:
+            written.append(counter)
+
+        def close(self) -> None:
+            pass
+
+    manager._recorder = _SpyRecorder()  # type: ignore[assignment]
+    samples = [
+        Sample(counter=1000, channels=(0, 0, 0, 0, 0, 0), averaged_n=0),
+        Sample(counter=1001, channels=(0, 0, 0, 0, 0, 0), averaged_n=0),
+        Sample(counter=1002, channels=(0, 0, 0, 0, 0, 0), averaged_n=0),
+    ]
+    with mock.patch.object(manager._driver, "iter_samples", return_value=iter(samples)):
+        manager._stream_worker()
+
+    assert written == [0, 1, 2]
