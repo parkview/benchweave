@@ -24,7 +24,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "profiles": {
         "default": {
             "channels": {
-                key: {"name": key, "unit": "V", "gain": _DEFAULT_GAIN, "offset": 0.0}
+                key: {"name": key, "unit": "V", "gain": _DEFAULT_GAIN, "offset": 0.0, "show": True}
                 for key in CHANNEL_KEYS
             },
             "computed": [],
@@ -97,21 +97,23 @@ def convert_channels(sample: Sample, config: dict[str, Any]) -> list[dict[str, o
         ch = profile["channels"][key]
         value = sample.channels[i] * ch["gain"] + ch["offset"]
         physical[key] = value
-        converted.append(
-            {"key": key, "name": ch["name"], "unit": ch["unit"], "value": round(value, 6)}
-        )
+        if ch.get("show", True):
+            converted.append(
+                {"key": key, "name": ch["name"], "unit": ch["unit"], "value": round(value, 6)}
+            )
     for comp in profile.get("computed", []):
         try:
             value = evaluate_expr(comp["expr"], physical)
             result: object = round(value, 6)
         except Exception:
             result = None
-        converted.append(
-            {
-                "key": comp.get("key", comp["name"]),
-                "name": comp["name"],
-                "unit": comp["unit"],
-                "value": result,
-            }
-        )
+        if comp.get("show", True):
+            converted.append(
+                {
+                    "key": comp.get("key", comp["name"]),
+                    "name": comp["name"],
+                    "unit": comp["unit"],
+                    "value": result,
+                }
+            )
     return converted

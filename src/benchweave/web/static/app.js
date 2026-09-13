@@ -291,7 +291,10 @@ function renderChannelTable() {
       `<td><input type="text" data-key="${key}" data-field="name" value="${ch.name}"></td>` +
       `<td><input type="text" data-key="${key}" data-field="unit" value="${ch.unit}"></td>` +
       `<td><input type="number" step="any" data-key="${key}" data-field="gain" value="${ch.gain}"></td>` +
-      `<td><input type="number" step="any" data-key="${key}" data-field="offset" value="${ch.offset}"></td>`;
+      `<td><input type="number" step="any" data-key="${key}" data-field="offset" value="${ch.offset}"></td>` +
+      `<td><input type="checkbox" data-key="${key}" data-field="show"${
+        ch.show === false ? "" : " checked"
+      }></td>`;
     tbody.appendChild(tr);
   });
 }
@@ -315,11 +318,13 @@ async function onSaveConfig() {
     ch.offset = parseFloat(
       document.querySelector(`input[data-key="${key}"][data-field="offset"]`).value
     );
+    ch.show = document.querySelector(`input[data-key="${key}"][data-field="show"]`).checked;
   });
   profile.computed = (profile.computed || []).map((_, i) => ({
     name: document.querySelector(`#computed-table input[data-index="${i}"][data-field="name"]`).value,
     unit: document.querySelector(`#computed-table input[data-index="${i}"][data-field="unit"]`).value,
     expr: document.querySelector(`#computed-table input[data-index="${i}"][data-field="expr"]`).value,
+    show: document.querySelector(`#computed-table input[data-index="${i}"][data-field="show"]`).checked,
   }));
   try {
     currentConfig = await api("/api/config", {
@@ -346,6 +351,9 @@ function renderComputedTable() {
       `<td><input type="text" data-index="${i}" data-field="name" value="${comp.name || ""}"></td>` +
       `<td><input type="text" data-index="${i}" data-field="unit" value="${comp.unit || ""}"></td>` +
       `<td><input type="text" data-index="${i}" data-field="expr" value="${comp.expr || ""}"></td>` +
+      `<td><input type="checkbox" data-index="${i}" data-field="show"${
+        comp.show === false ? "" : " checked"
+      }></td>` +
       `<td><button data-delete="${i}">✕</button></td>`;
     tr.querySelector("button").addEventListener("click", () => onDeleteComputed(i));
     tbody.appendChild(tr);

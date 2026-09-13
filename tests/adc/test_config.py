@@ -87,3 +87,28 @@ def test_convert_channels_with_computed() -> None:
     assert current["name"] == "Current"
     assert current["unit"] == "A"
     assert current["value"] == 10.0
+
+
+def test_convert_channels_hides_show_false() -> None:
+    sample = Sample(counter=0, channels=(1000, 0, 0, 0, 0, 0), averaged_n=0)
+    cfg = {
+        "active_profile": "default",
+        "profiles": {
+            "default": {
+                "channels": {
+                    key: {
+                        "name": key,
+                        "unit": "V",
+                        "gain": 0.001,
+                        "offset": 0.0,
+                        "show": key != "A0",
+                    }
+                    for key in CHANNEL_KEYS
+                },
+                "computed": [],
+            }
+        },
+    }
+    converted = convert_channels(sample, cfg)
+    assert len(converted) == 5  # A0 hidden
+    assert all(c["key"] != "A0" for c in converted)
