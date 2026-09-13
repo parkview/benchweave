@@ -1,11 +1,14 @@
 from pathlib import Path
 from unittest import mock
 
+import pytest
+
 from plugins.adc_6ch_12bit import config
 from plugins.adc_6ch_12bit.config import (
     CHANNEL_KEYS,
     DEFAULT_CONFIG,
     convert_channels,
+    evaluate_expr,
     load_config,
     save_config,
 )
@@ -49,3 +52,38 @@ def test_save_and_load_roundtrip(tmp_path: Path) -> None:
         cfg["active_profile"] = "cap-current"
         save_config(cfg)
         assert load_config()["active_profile"] == "cap-current"
+
+
+def test_evaluate_expr_arithmetic() -> None:
+    values = {"A0": 3.0, "A1": 2.0}
+    assert evaluate_expr("(A0 - A1) / 0.1", values) == 10.0
+    assert evaluate_expr("A0 * 2 + 1", values) == 7.0
+
+
+def test_evaluate_expr_rejects_non_arithmetic() -> None:
+    with pytest.raises(ValueError):
+        evaluate_expr("__import__('os')", {"A0": 1.0})
+
+
+def test_convert_channels_with_computed() -> None:
+    sample = Sample(counter=0, channels=(3000, 2000, 0, 0, 0, 0), averaged_n=0)
+    cfg = {
+        "active_profile": "default",
+        "profiles": {
+            "default": {
+                "channels": {
+                    key: {"name": key, "unit": "V", "gain": 0.001, "offset": 0.0}
+                    for key in CHANNEL_KEYS
+                },
+                "computed": [
+                    {"name": "Current", "unit": "A", "expr": "(A0 - A1) / 0.1"}
+                ],
+            }
+        },
+    }
+    converted = convert_channels(sample, cfg)
+    assert len(converted) == 7
+    current = converted[6]
+    assert current["name"] == "Current"
+    assert current["unit"] == "A"
+    assert current["value"] == 10.0
