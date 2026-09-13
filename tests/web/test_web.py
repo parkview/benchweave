@@ -4,7 +4,6 @@ import pytest
 from fastapi import HTTPException
 
 from benchweave.web import app as web_app
-from benchweave.web.app import SSE_MIN_INTERVAL, _sse_interval
 from benchweave.web.board import BoardManager
 from plugins.adc_6ch_12bit.driver import Sample
 from plugins.adc_6ch_12bit.protocol import IdentifyInfo
@@ -106,24 +105,10 @@ def test_record_interval_from_sample_rate() -> None:
         assert manager._record_interval() == 0.0
 
 
-def test_sse_interval_honours_sample_rate() -> None:
-    # Slow rates throttle the graph to match the CSV recording rate.
-    assert _sse_interval({"settings": {"sample_rate_hz": 0.5}}) == pytest.approx(2.0)
-    assert _sse_interval({"settings": {"sample_rate_hz": 0.1}}) == pytest.approx(10.0)
-    # No rate -> the ~30 Hz live cap.
-    assert _sse_interval({"settings": {"sample_rate_hz": None}}) == pytest.approx(
-        SSE_MIN_INTERVAL
-    )
-    assert _sse_interval({}) == pytest.approx(SSE_MIN_INTERVAL)
-    # Rates faster than the live cap stay capped, not sped up.
-    assert _sse_interval({"settings": {"sample_rate_hz": 100}}) == pytest.approx(
-        SSE_MIN_INTERVAL
-    )
-
-
-def test_stream_worker_rebases_counter_per_stream() -> None:
+def test_stream_worker_assigns_sequential_counter() -> None:
     manager = BoardManager()
     manager._loop = None  # exercise the recording path only
+    manager._config = {"settings": {"sample_rate_hz": None}}  # full rate: keep every sample
 
     written: list[int] = []
 
@@ -140,7 +125,40 @@ def test_stream_worker_rebases_counter_per_stream() -> None:
         Sample(counter=1001, channels=(0, 0, 0, 0, 0, 0), averaged_n=0),
         Sample(counter=1002, channels=(0, 0, 0, 0, 0, 0), averaged_n=0),
     ]
-    with mock.patch.object(manager._driver, "iter_samples", return_value=iter(samples)):
+    with (
+        mock.patch.object(manager._driver, "iter_samples", return_value=iter(samples)),
+        mock.patch.object(manager, "convert_sample", return_value=[]),
+    ):
         manager._stream_worker()
 
+    assert written == [0, 1, 2]
+
+
+def test_stream_worker_decimates_to_sample_rate() -> None:
+    manager = BoardManager()
+    manager._loop = None
+    manager._config = {"settings": {"sample_rate_hz": 2}}  # 0.5 s between samples
+
+    written: list[int] = []
+
+    class _SpyRecorder:
+        def write(self, counter: int, averaged_n: int, values: list[object]) -> None:
+            written.append(counter)
+
+        def close(self) -> None:
+            pass
+
+    manager._recorder = _SpyRecorder()  # type: ignore[assignment]
+    samples = [
+        Sample(counter=i, channels=(0, 0, 0, 0, 0, 0), averaged_n=0) for i in range(5)
+    ]
+    clock = iter([0.5, 0.75, 1.0, 1.25, 1.5])
+    with (
+        mock.patch.object(manager._driver, "iter_samples", return_value=iter(samples)),
+        mock.patch.object(manager, "convert_sample", return_value=[]),
+        mock.patch("benchweave.web.board.time.monotonic", side_effect=lambda: next(clock)),
+    ):
+        manager._stream_worker()
+
+    # Only the samples at 0.5, 1.0, 1.5 s survive the 0.5 s decimation.
     assert written == [0, 1, 2]

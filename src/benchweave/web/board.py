@@ -35,7 +35,6 @@ class _Recorder:
         path: str,
         column_names: list[str],
         metadata: list[str],
-        interval: float,
     ) -> None:
         self.path = path
         self._file = open(path, "w", newline="")  # noqa: SIM115 (held open for streaming)
@@ -46,22 +45,16 @@ class _Recorder:
             ["timestamp", "elapsed_s", "actual_sps", "counter", "averaged_n", *column_names]
         )
         self._t0 = time.monotonic()
-        self._interval = interval  # seconds between records; 0 = no throttle
-        self._last_write = 0.0
         self._last_elapsed: float | None = None
 
     def write(self, counter: int, averaged_n: int, values: list[object]) -> None:
-        now = time.monotonic()
-        if self._interval > 0.0 and now - self._last_write < self._interval:
-            return
-        elapsed = now - self._t0
+        elapsed = time.monotonic() - self._t0
         if self._last_elapsed is None:
             sps = 0.0
         else:
             delta = elapsed - self._last_elapsed
             sps = round(1.0 / delta, 3) if delta > 0.0 else 0.0
         self._last_elapsed = elapsed
-        self._last_write = now
         self._writer.writerow(
             [
                 datetime.now().isoformat(timespec="microseconds"),
@@ -226,7 +219,7 @@ class BoardManager:
                 if record:
                     path = capture_dir() / adc_capture_filename(self._serial)
                     names, metadata = self._record_meta(note)
-                    self._recorder = _Recorder(str(path), names, metadata, self._record_interval())
+                    self._recorder = _Recorder(str(path), names, metadata)
                 else:
                     self._recorder = None
                 self._record_path = self._recorder.path if self._recorder else None
@@ -268,14 +261,19 @@ class BoardManager:
     def _stream_worker(self) -> None:
         loop = self._loop
         recorder = self._recorder
-        base: int | None = None
+        interval = self._record_interval()  # seconds between samples; 0 = every sample
+        counter = 0
+        last = 0.0
         try:
             for sample in self._driver.iter_samples():
-                # The firmware counter is board-lifetime and does not reset on
-                # START_STREAM, so rebase it to a per-stream counter starting at 0.
-                if base is None:
-                    base = sample.counter
-                sample = replace(sample, counter=sample.counter - base)
+                now = time.monotonic()
+                if interval > 0.0 and now - last < interval:
+                    continue
+                last = now
+                # Count recorded samples (post-decimation) so the graph and CSV row
+                # order match, instead of the firmware's board-lifetime sample count.
+                sample = replace(sample, counter=counter)
+                counter += 1
                 if recorder is not None:
                     channels = self.convert_sample(sample)
                     recorder.write(

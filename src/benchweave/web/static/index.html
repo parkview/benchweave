@@ -60,6 +60,10 @@
 
     <section id="graph">
       <span id="throughput"></span>
+      <span id="graph-mode">
+        <label><input type="radio" name="graph-mode" value="window" checked> Window (last 300)</label>
+        <label><input type="radio" name="graph-mode" value="all"> All data</label>
+      </span>
       <div id="chart-box"><canvas id="chart"></canvas></div>
     </section>
   </div>
@@ -93,6 +97,6 @@
     </section>
   </div>
 
-  <script src="/app.js"></script>
+  <script src="/app.js?v=4"></script>
 </body>
 </html>

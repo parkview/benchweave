@@ -80,11 +80,12 @@ function updateChart() {
 }
 
 function addSample(counter, channels) {
+  const windowMode = currentGraphMode() === "window";
   channels.forEach((ch, i) => {
     const ds = chart.data.datasets[i];
     if (!ds || ch.value === null) return;
     ds.data.push({ x: counter, y: ch.value });
-    if (ds.data.length > MAX_POINTS) ds.data.shift();
+    if (windowMode && ds.data.length > MAX_POINTS) ds.data.shift();
   });
   chart.update();
 
@@ -97,6 +98,31 @@ function addSample(counter, channels) {
   }
   lastCounter = counter;
   lastCounterAt = now;
+}
+
+function resetChart() {
+  chart.data.datasets.forEach((ds) => {
+    ds.data.length = 0;
+  });
+  chart.update();
+  lastCounter = null;
+  lastCounterAt = 0;
+  document.getElementById("throughput").textContent = "";
+}
+
+function currentGraphMode() {
+  const checked = document.querySelector('input[name="graph-mode"]:checked');
+  return checked ? checked.value : "window";
+}
+
+function syncGraphMode() {
+  const mode = currentGraphMode();
+  if (mode === "window") {
+    chart.data.datasets.forEach((ds) => {
+      if (ds.data.length > MAX_POINTS) ds.data.splice(0, ds.data.length - MAX_POINTS);
+    });
+  }
+  chart.update();
 }
 
 // -- API helpers ------------------------------------------------------------
@@ -240,6 +266,7 @@ async function onStreamToggle() {
         method: "POST",
         body: JSON.stringify({ record, note }),
       });
+      resetChart();
       openEventSource();
     }
     await refreshStatus();
@@ -460,6 +487,9 @@ window.addEventListener("DOMContentLoaded", () => {
   document.getElementById("connect-btn").addEventListener("click", connect);
   document.getElementById("averaging").addEventListener("change", onAveragingChange);
   document.getElementById("stream-toggle").addEventListener("click", onStreamToggle);
+  document.querySelectorAll('input[name="graph-mode"]').forEach((r) =>
+    r.addEventListener("change", syncGraphMode)
+  );
   document.querySelectorAll(".tab").forEach((t) =>
     t.addEventListener("click", () => switchTab(t.dataset.tab))
   );

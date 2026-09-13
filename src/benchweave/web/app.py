@@ -24,18 +24,6 @@ SSE_MIN_INTERVAL = 0.033  # downsample the live view to ~30 Hz
 manager = BoardManager()
 
 
-def _sse_interval(config: dict[str, Any]) -> float:
-    """Minimum seconds between SSE graph events.
-
-    When ``sample_rate_hz`` is set, throttle the live graph to the same rate as
-    the CSV recording so the two stay in sync; otherwise keep the ~30 Hz live cap.
-    """
-    rate = config.get("settings", {}).get("sample_rate_hz")
-    if rate:
-        return max(SSE_MIN_INTERVAL, 1.0 / float(rate))
-    return SSE_MIN_INTERVAL
-
-
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     manager.set_loop(asyncio.get_running_loop())
@@ -137,7 +125,6 @@ async def stream(request: Request) -> StreamingResponse:
 
     async def events() -> AsyncIterator[str]:
         last = 0.0
-        interval = _sse_interval(manager.get_config())
         try:
             while True:
                 if await request.is_disconnected():
@@ -147,8 +134,8 @@ async def stream(request: Request) -> StreamingResponse:
                 except TimeoutError:
                     continue
                 now = time.monotonic()
-                if now - last < interval:
-                    continue  # downsample: drop samples faster than the configured rate
+                if now - last < SSE_MIN_INTERVAL:
+                    continue  # cap the live view at ~30 Hz
                 last = now
                 payload = {
                     "counter": sample.counter,
