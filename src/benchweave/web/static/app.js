@@ -13,18 +13,7 @@ let eventSource = null;
 function initChart() {
   chart = new Chart(document.getElementById("chart"), {
     type: "line",
-    data: {
-      datasets: CHANNEL_KEYS.map((key, i) => ({
-        label: key,
-        data: [],
-        borderColor: COLORS[i],
-        backgroundColor: COLORS[i],
-        borderWidth: 1,
-        pointRadius: 0,
-        parsing: false,
-        yAxisID: "y",
-      })),
-    },
+    data: { datasets: [] },
     options: {
       animation: false,
       interaction: { mode: "nearest", intersect: false },
@@ -50,17 +39,42 @@ function initChart() {
 function updateChart() {
   if (!chart || !currentConfig) return;
   const profile = currentConfig.profiles[currentConfig.active_profile];
+  const computed = profile.computed || [];
+  const total = CHANNEL_KEYS.length + computed.length;
+
+  while (chart.data.datasets.length < total) {
+    const i = chart.data.datasets.length;
+    chart.data.datasets.push({
+      label: "",
+      data: [],
+      borderColor: COLORS[i % COLORS.length],
+      backgroundColor: COLORS[i % COLORS.length],
+      borderWidth: 1,
+      pointRadius: 0,
+      parsing: false,
+      yAxisID: "y",
+    });
+  }
+  chart.data.datasets.length = total;
+
   CHANNEL_KEYS.forEach((key, i) => {
     const ch = profile.channels[key];
     chart.data.datasets[i].label = ch.name;
     chart.data.datasets[i].yAxisID = ch.unit === "A" ? "y2" : "y";
   });
+  computed.forEach((comp, i) => {
+    const ds = chart.data.datasets[CHANNEL_KEYS.length + i];
+    ds.label = comp.name;
+    ds.yAxisID = comp.unit === "A" ? "y2" : "y";
+  });
   chart.update();
 }
 
 function addSample(counter, channels) {
-  chart.data.datasets.forEach((ds, i) => {
-    ds.data.push({ x: counter, y: channels[i].value });
+  channels.forEach((ch, i) => {
+    const ds = chart.data.datasets[i];
+    if (!ds || ch.value === null) return;
+    ds.data.push({ x: counter, y: ch.value });
     if (ds.data.length > MAX_POINTS) ds.data.shift();
   });
   chart.update();
@@ -244,6 +258,7 @@ async function loadConfig() {
     currentConfig = await api("/api/config");
     renderProfileSelect();
     renderChannelTable();
+    renderComputedTable();
     updateChart();
     document.getElementById("config-status").textContent = "";
   } catch (e) {
@@ -283,6 +298,8 @@ function renderChannelTable() {
 function onProfileChange() {
   currentConfig.active_profile = document.getElementById("profile-select").value;
   renderChannelTable();
+  renderComputedTable();
+  updateChart();
 }
 
 async function onSaveConfig() {
@@ -298,6 +315,11 @@ async function onSaveConfig() {
       document.querySelector(`input[data-key="${key}"][data-field="offset"]`).value
     );
   });
+  profile.computed = (profile.computed || []).map((_, i) => ({
+    name: document.querySelector(`#computed-table input[data-index="${i}"][data-field="name"]`).value,
+    unit: document.querySelector(`#computed-table input[data-index="${i}"][data-field="unit"]`).value,
+    expr: document.querySelector(`#computed-table input[data-index="${i}"][data-field="expr"]`).value,
+  }));
   try {
     currentConfig = await api("/api/config", {
       method: "PUT",
@@ -306,10 +328,55 @@ async function onSaveConfig() {
     document.getElementById("config-status").textContent = "saved";
     renderProfileSelect();
     renderChannelTable();
+    renderComputedTable();
     updateChart();
   } catch (e) {
     document.getElementById("config-status").textContent = "save error: " + e.message;
   }
+}
+
+function renderComputedTable() {
+  const tbody = document.querySelector("#computed-table tbody");
+  tbody.innerHTML = "";
+  const profile = currentConfig.profiles[currentConfig.active_profile];
+  (profile.computed || []).forEach((comp, i) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML =
+      `<td><input type="text" data-index="${i}" data-field="name" value="${comp.name || ""}"></td>` +
+      `<td><input type="text" data-index="${i}" data-field="unit" value="${comp.unit || ""}"></td>` +
+      `<td><input type="text" data-index="${i}" data-field="expr" value="${comp.expr || ""}"></td>` +
+      `<td><button data-delete="${i}">✕</button></td>`;
+    tr.querySelector("button").addEventListener("click", () => onDeleteComputed(i));
+    tbody.appendChild(tr);
+  });
+}
+
+function onNewProfile() {
+  const name = document.getElementById("new-profile-name").value.trim();
+  if (!name || currentConfig.profiles[name]) return;
+  currentConfig.profiles[name] = JSON.parse(
+    JSON.stringify(currentConfig.profiles[currentConfig.active_profile])
+  );
+  currentConfig.active_profile = name;
+  document.getElementById("new-profile-name").value = "";
+  renderProfileSelect();
+  renderChannelTable();
+  renderComputedTable();
+  updateChart();
+}
+
+function onAddComputed() {
+  const profile = currentConfig.profiles[currentConfig.active_profile];
+  profile.computed = profile.computed || [];
+  profile.computed.push({ name: "", unit: "A", expr: "" });
+  renderComputedTable();
+}
+
+function onDeleteComputed(index) {
+  const profile = currentConfig.profiles[currentConfig.active_profile];
+  profile.computed = profile.computed || [];
+  profile.computed.splice(index, 1);
+  renderComputedTable();
 }
 
 // -- Wire up ----------------------------------------------------------------
@@ -327,5 +394,7 @@ window.addEventListener("DOMContentLoaded", () => {
   );
   document.getElementById("profile-select").addEventListener("change", onProfileChange);
   document.getElementById("save-config").addEventListener("click", onSaveConfig);
+  document.getElementById("new-profile").addEventListener("click", onNewProfile);
+  document.getElementById("add-computed").addEventListener("click", onAddComputed);
   discover();
 });
