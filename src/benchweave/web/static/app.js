@@ -39,8 +39,9 @@ function initChart() {
 function updateChart() {
   if (!chart || !currentConfig) return;
   const profile = currentConfig.profiles[currentConfig.active_profile];
-  const computed = profile.computed || [];
-  const total = CHANNEL_KEYS.length + computed.length;
+  const shownPhysical = CHANNEL_KEYS.filter((key) => profile.channels[key].show !== false);
+  const shownComputed = (profile.computed || []).filter((c) => c.show !== false);
+  const total = shownPhysical.length + shownComputed.length;
 
   while (chart.data.datasets.length < total) {
     const i = chart.data.datasets.length;
@@ -57,7 +58,7 @@ function updateChart() {
   }
   chart.data.datasets.length = total;
 
-  CHANNEL_KEYS.forEach((key, i) => {
+  shownPhysical.forEach((key, i) => {
     const ch = profile.channels[key];
     const color = ch.color || COLORS[i % COLORS.length];
     chart.data.datasets[i].label = ch.name;
@@ -65,9 +66,9 @@ function updateChart() {
     chart.data.datasets[i].backgroundColor = color;
     chart.data.datasets[i].yAxisID = ch.unit === "A" ? "y2" : "y";
   });
-  computed.forEach((comp, i) => {
-    const ds = chart.data.datasets[CHANNEL_KEYS.length + i];
-    const color = comp.color || COLORS[(CHANNEL_KEYS.length + i) % COLORS.length];
+  shownComputed.forEach((comp, i) => {
+    const ds = chart.data.datasets[shownPhysical.length + i];
+    const color = comp.color || COLORS[(shownPhysical.length + i) % COLORS.length];
     ds.label = comp.name;
     ds.borderColor = color;
     ds.backgroundColor = color;
