@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import Any
 
 from plugins.adc_6ch_12bit import (
+    CHANNEL_KEYS,
     CHANNEL_MASK_ALL,
     AdcDriver,
     Sample,
@@ -23,28 +24,27 @@ from plugins.adc_6ch_12bit import (
     serial_for_device,
 )
 
-CHANNEL_NAMES = ("a0", "a1", "a2", "a3", "a4", "a7")
-CSV_HEADER = ["timestamp", "elapsed_s", "counter", "averaged_n", *CHANNEL_NAMES]
-
 
 class _Recorder:
-    """Appends samples to a CSV file, one row per sample."""
+    """Appends converted samples to a CSV file, with a metadata header."""
 
-    def __init__(self, path: str) -> None:
+    def __init__(self, path: str, column_names: list[str], metadata: list[str]) -> None:
         self.path = path
         self._file = open(path, "w", newline="")  # noqa: SIM115 (held open for streaming)
+        for line in metadata:
+            self._file.write(f"# {line}\n")
         self._writer = csv.writer(self._file)
-        self._writer.writerow(CSV_HEADER)
+        self._writer.writerow(["timestamp", "elapsed_s", "counter", "averaged_n", *column_names])
         self._t0 = time.monotonic()
 
-    def write(self, sample: Sample) -> None:
+    def write(self, counter: int, averaged_n: int, values: list[object]) -> None:
         self._writer.writerow(
             [
                 datetime.now().isoformat(timespec="microseconds"),
                 round(time.monotonic() - self._t0, 6),
-                sample.counter,
-                sample.averaged_n,
-                *sample.channels,
+                counter,
+                averaged_n,
+                *values,
             ]
         )
 
@@ -146,6 +146,22 @@ class BoardManager:
     def convert_sample(self, sample: Sample) -> list[dict[str, object]]:
         return convert_channels(sample, self._config)
 
+    def _record_meta(self, note: str) -> tuple[list[str], list[str]]:
+        profile_name = str(self._config["active_profile"])
+        profile = self._config["profiles"][profile_name]
+        names: list[str] = []
+        metadata = [f"profile: {profile_name}"]
+        if note:
+            metadata.append(f"note: {note}")
+        for key in CHANNEL_KEYS:
+            ch = profile["channels"][key]
+            names.append(str(ch["name"]))
+            metadata.append(f"{key}: {ch['name']} ({ch['unit']})")
+        for comp in profile.get("computed", []):
+            names.append(str(comp["name"]))
+            metadata.append(f"computed: {comp['name']} ({comp['unit']}) = {comp['expr']}")
+        return names, metadata
+
     # -- control -------------------------------------------------------------
 
     def set_averaging(self, n: int) -> dict[str, object]:
@@ -162,7 +178,7 @@ class BoardManager:
             self._channel_mask = mask
         return self.status()
 
-    def start_stream(self, record: bool = False) -> dict[str, object]:
+    def start_stream(self, record: bool = False, note: str = "") -> dict[str, object]:
         with self._lock:
             self._require_connected()
             if not self._streaming:
@@ -170,7 +186,8 @@ class BoardManager:
                 self._streaming = True
                 if record:
                     path = capture_dir() / adc_capture_filename(self._serial)
-                    self._recorder = _Recorder(str(path))
+                    names, metadata = self._record_meta(note)
+                    self._recorder = _Recorder(str(path), names, metadata)
                 else:
                     self._recorder = None
                 self._record_path = self._recorder.path if self._recorder else None
@@ -215,7 +232,10 @@ class BoardManager:
         try:
             for sample in self._driver.iter_samples():
                 if recorder is not None:
-                    recorder.write(sample)
+                    channels = self.convert_sample(sample)
+                    recorder.write(
+                        sample.counter, sample.averaged_n, [c["value"] for c in channels]
+                    )
                 if loop is not None:
                     loop.call_soon_threadsafe(self._publish, sample)
         except Exception:

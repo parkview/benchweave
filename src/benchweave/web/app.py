@@ -48,6 +48,7 @@ class ChannelsBody(BaseModel):
 
 class StreamStartBody(BaseModel):
     record: bool = False
+    note: str = ""
 
 
 @app.get("/api/boards")
@@ -106,7 +107,9 @@ def set_channels(body: ChannelsBody) -> dict[str, object]:
 @app.post("/api/stream/start")
 def stream_start(body: StreamStartBody | None = None) -> dict[str, object]:
     try:
-        return manager.start_stream(record=body.record if body else False)
+        return manager.start_stream(
+            record=body.record if body else False, note=body.note if body else ""
+        )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
