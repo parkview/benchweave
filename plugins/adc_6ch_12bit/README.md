@@ -59,6 +59,12 @@ board does ~3,300 samples/s at averaging 0. Expected sample rates (6 channels):
 Averaging trades noise against speed; a `sample_rate_hz` recording setting
 (backend decimation) caps how many of those samples are recorded.
 
+Python-side recording is not the bottleneck: the CSV writer benchmarks at
+~230,000 rows/s (4.3 µs/row), so even the ~8,700 frames/s UART ceiling uses only
+~4% of the write budget — the ADC (~3,300 SPS) is the limiter, not the recorder.
+At very high rates (>~20K SPS) the per-sample `call_soon_threadsafe` used to feed
+the SSE display would start to matter; downsample in the worker thread instead.
+
 ## Usage
 
 ```python
