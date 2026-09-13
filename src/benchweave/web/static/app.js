@@ -3,7 +3,8 @@
 const CHANNEL_NAMES = ["a0", "a1", "a2", "a3", "a4", "a7"];
 const CHANNEL_KEYS = ["A0", "A1", "A2", "A3", "A4", "A7"];
 const COLORS = ["#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4", "#f032e6"];
-const MAX_POINTS = 300;
+const POINTS_PER_PERCENT = 5; // ~500 points at full width
+let WINDOW_POINTS = 300; // window size, updated from config
 
 let chart = null;
 let eventSource = null;
@@ -85,7 +86,7 @@ function addSample(counter, channels) {
     const ds = chart.data.datasets[i];
     if (!ds || ch.value === null) return;
     ds.data.push({ x: counter, y: ch.value });
-    if (windowMode && ds.data.length > MAX_POINTS) ds.data.shift();
+    if (windowMode && ds.data.length > WINDOW_POINTS) ds.data.shift();
   });
   chart.update();
 
@@ -119,7 +120,7 @@ function syncGraphMode() {
   const mode = currentGraphMode();
   if (mode === "window") {
     chart.data.datasets.forEach((ds) => {
-      if (ds.data.length > MAX_POINTS) ds.data.splice(0, ds.data.length - MAX_POINTS);
+      if (ds.data.length > WINDOW_POINTS) ds.data.splice(0, ds.data.length - WINDOW_POINTS);
     });
   }
   chart.update();
@@ -307,6 +308,7 @@ async function loadConfig() {
     renderChannelTable();
     renderComputedTable();
     renderSettings();
+    applyGraphSettings();
     updateChart();
     await updateMaxSps();
     document.getElementById("config-status").textContent = "";
@@ -380,8 +382,11 @@ async function onSaveConfig() {
     color: document.querySelector(`#computed-table input[data-index="${i}"][data-field="color"]`).value,
   }));
   const srInput = document.getElementById("sample-rate");
+  const gwInput = document.getElementById("graph-width");
   currentConfig.settings = currentConfig.settings || {};
   currentConfig.settings.sample_rate_hz = srInput.value === "" ? null : parseFloat(srInput.value);
+  currentConfig.settings.graph_width =
+    gwInput.value === "" ? null : parseInt(gwInput.value, 10);
   try {
     currentConfig = await api("/api/config", {
       method: "PUT",
@@ -393,6 +398,7 @@ async function onSaveConfig() {
     renderComputedTable();
     renderSettings();
     updateChart();
+    applyGraphSettings();
   } catch (e) {
     document.getElementById("config-status").textContent = "save error: " + e.message;
   }
@@ -424,6 +430,17 @@ function renderSettings() {
   const s = currentConfig.settings || {};
   const el = document.getElementById("sample-rate");
   el.value = s.sample_rate_hz == null ? "" : String(s.sample_rate_hz);
+  const gw = document.getElementById("graph-width");
+  gw.value = s.graph_width == null ? "" : String(s.graph_width);
+}
+
+function applyGraphSettings() {
+  const s = (currentConfig && currentConfig.settings) || {};
+  const width = Math.min(100, Math.max(1, Number(s.graph_width) || 100));
+  WINDOW_POINTS = Math.max(10, Math.round(width * POINTS_PER_PERCENT));
+  document.getElementById("graph").style.width = width + "%";
+  document.getElementById("window-count").textContent = WINDOW_POINTS;
+  if (chart) chart.resize();
 }
 
 async function updateMaxSps() {

@@ -6,12 +6,14 @@
   <title>BenchWeave ADC</title>
   <script src="/chart.umd.js"></script>
   <style>
-    body { font-family: system-ui, sans-serif; margin: 1.5rem; max-width: 64rem; }
+    body { font-family: system-ui, sans-serif; margin: 1.5rem; }
     h1 { margin: 0 0 0.5rem; }
     .tabs { margin-bottom: 1rem; }
     .tab { font-size: 0.95rem; padding: 0.4rem 0.9rem; cursor: pointer; }
     .tab.active { font-weight: 600; }
     section { margin: 1rem 0; padding: 0.75rem; border: 1px solid #ddd; border-radius: 6px; }
+    #connect, #control, #channel-config { max-width: 64rem; }
+    #graph { box-sizing: border-box; }
     label, span { margin-right: 1rem; }
     button, select, input { font-size: 0.95rem; }
     #channels { display: inline-flex; gap: 0.75rem; flex-wrap: wrap; }
@@ -61,7 +63,7 @@
     <section id="graph">
       <span id="throughput"></span>
       <span id="graph-mode">
-        <label><input type="radio" name="graph-mode" value="window" checked> Window (last 300)</label>
+        <label><input type="radio" name="graph-mode" value="window" checked> Window (last <span id="window-count">300</span>)</label>
         <label><input type="radio" name="graph-mode" value="all"> All data</label>
       </span>
       <div id="chart-box"><canvas id="chart"></canvas></div>
@@ -81,6 +83,9 @@
         <input type="number" id="sample-rate" min="0" step="any" placeholder="full rate">
       </label>
       <span id="max-sps"></span>
+      <label>Graph width (%):
+        <input type="number" id="graph-width" min="10" max="100" step="1" placeholder="100">
+      </label>
       <table id="channel-table">
         <thead>
           <tr><th>Channel</th><th>Name</th><th>Unit</th><th>Gain</th><th>Offset</th><th>Color</th><th>Show</th></tr>
@@ -97,6 +102,6 @@
     </section>
   </div>
 
-  <script src="/app.js?v=4"></script>
+  <script src="/app.js?v=5"></script>
 </body>
 </html>
