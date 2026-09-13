@@ -19,6 +19,7 @@ function initChart() {
     data: { datasets: [] },
     options: {
       animation: false,
+      maintainAspectRatio: false,
       interaction: { mode: "nearest", intersect: false },
       scales: {
         x: { type: "linear", title: { display: true, text: "sample counter" } },
@@ -298,7 +299,15 @@ function switchTab(name) {
   });
   document.getElementById("tab-control").hidden = name !== "control";
   document.getElementById("tab-setup").hidden = name !== "setup";
-  if (name === "setup") loadConfig();
+  if (name === "setup") {
+    loadConfig();
+  } else {
+    // The chart was hidden while on the setup tab; re-measure it now that it's
+    // visible so the canvas fills the (possibly changed) width.
+    requestAnimationFrame(() => {
+      if (chart) chart.resize();
+    });
+  }
 }
 
 async function loadConfig() {
@@ -440,7 +449,11 @@ function applyGraphSettings() {
   WINDOW_POINTS = Math.max(10, Math.round(width * POINTS_PER_PERCENT));
   document.getElementById("graph").style.width = width + "%";
   document.getElementById("window-count").textContent = WINDOW_POINTS;
-  if (chart) chart.resize();
+  // Resize after the browser reflows the new width; a synchronous resize here
+  // reads a stale container size (zero while the graph tab is hidden).
+  requestAnimationFrame(() => {
+    if (chart) chart.resize();
+  });
 }
 
 async function updateMaxSps() {
