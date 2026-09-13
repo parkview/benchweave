@@ -118,8 +118,11 @@ class BoardManager:
             self._fw_major = info.fw_major
             self._fw_minor = info.fw_minor
             self._averaging = 0
-            self._channel_mask = CHANNEL_MASK_ALL
             self._streaming = False
+            # Re-apply the persisted channel selection to the freshly opened board.
+            mask = self._persisted_channel_mask()
+            self._driver.set_channels(mask)
+            self._channel_mask = mask
         return self.status()
 
     def disconnect(self) -> None:
@@ -194,6 +197,15 @@ class BoardManager:
             return 0.0
         return 1.0 / float(rate)
 
+    def _persisted_channel_mask(self) -> int:
+        """The last saved channel selection, defaulting to all channels."""
+        value = self._config.get("settings", {}).get("channel_mask", CHANNEL_MASK_ALL)
+        try:
+            mask = int(value)
+        except (TypeError, ValueError):
+            return CHANNEL_MASK_ALL
+        return mask if 0 <= mask <= CHANNEL_MASK_ALL else CHANNEL_MASK_ALL
+
     # -- control -------------------------------------------------------------
 
     def set_averaging(self, n: int) -> dict[str, object]:
@@ -208,6 +220,8 @@ class BoardManager:
             self._require_idle()
             self._driver.set_channels(mask)
             self._channel_mask = mask
+            self._config.setdefault("settings", {})["channel_mask"] = mask
+            save_config(self._config)
         return self.status()
 
     def start_stream(self, record: bool = False, note: str = "") -> dict[str, object]:

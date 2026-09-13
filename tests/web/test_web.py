@@ -41,7 +41,10 @@ class _FakeDriver:
 
 
 def test_board_connect_status_and_config() -> None:
-    with mock.patch("benchweave.web.board.AdcDriver", _FakeDriver):
+    with (
+        mock.patch("benchweave.web.board.AdcDriver", _FakeDriver),
+        mock.patch("benchweave.web.board.save_config"),
+    ):
         manager = BoardManager()
         assert manager.status()["connected"] is False
 
@@ -56,6 +59,34 @@ def test_board_connect_status_and_config() -> None:
 
         manager.set_channels(0x0F)
         assert manager.status()["channel_mask"] == 0x0F
+
+
+def test_set_channels_persists_selection() -> None:
+    with (
+        mock.patch("benchweave.web.board.AdcDriver", _FakeDriver),
+        mock.patch("benchweave.web.board.save_config") as save,
+    ):
+        manager = BoardManager()
+        manager.connect("/dev/ttyACM2")
+        manager.set_channels(0b001011)  # a0, a1, a3
+        assert manager._config["settings"]["channel_mask"] == 0b001011
+        save.assert_called_once_with(manager._config)
+
+
+def test_connect_restores_channel_mask() -> None:
+    with mock.patch("benchweave.web.board.AdcDriver", _FakeDriver):
+        manager = BoardManager()
+        manager._config = {"settings": {"channel_mask": 0b001011}}
+        manager.connect("/dev/ttyACM2")
+        assert manager.status()["channel_mask"] == 0b001011
+
+
+def test_connect_defaults_to_all_channels_when_unsaved() -> None:
+    with mock.patch("benchweave.web.board.AdcDriver", _FakeDriver):
+        manager = BoardManager()
+        manager._config = {}
+        manager.connect("/dev/ttyACM2")
+        assert manager.status()["channel_mask"] == 0x3F  # CHANNEL_MASK_ALL
 
 
 def test_board_rejects_config_while_streaming() -> None:
