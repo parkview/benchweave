@@ -267,6 +267,7 @@ async function loadConfig() {
     renderProfileSelect();
     renderChannelTable();
     renderComputedTable();
+    renderSettings();
     updateChart();
     document.getElementById("config-status").textContent = "";
   } catch (e) {
@@ -338,6 +339,9 @@ async function onSaveConfig() {
     show: document.querySelector(`#computed-table input[data-index="${i}"][data-field="show"]`).checked,
     color: document.querySelector(`#computed-table input[data-index="${i}"][data-field="color"]`).value,
   }));
+  const srInput = document.getElementById("sample-rate");
+  currentConfig.settings = currentConfig.settings || {};
+  currentConfig.settings.sample_rate_hz = srInput.value === "" ? null : parseFloat(srInput.value);
   try {
     currentConfig = await api("/api/config", {
       method: "PUT",
@@ -347,6 +351,7 @@ async function onSaveConfig() {
     renderProfileSelect();
     renderChannelTable();
     renderComputedTable();
+    renderSettings();
     updateChart();
   } catch (e) {
     document.getElementById("config-status").textContent = "save error: " + e.message;
@@ -373,6 +378,12 @@ function renderComputedTable() {
     tr.querySelector("button").addEventListener("click", () => onDeleteComputed(i));
     tbody.appendChild(tr);
   });
+}
+
+function renderSettings() {
+  const s = currentConfig.settings || {};
+  const el = document.getElementById("sample-rate");
+  el.value = s.sample_rate_hz == null ? "" : String(s.sample_rate_hz);
 }
 
 function onNewProfile() {

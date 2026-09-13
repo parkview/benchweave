@@ -93,3 +93,12 @@ def test_api_rejects_invalid_channel_mask() -> None:
     with pytest.raises(HTTPException) as excinfo:
         web_app.set_channels(web_app.ChannelsBody(mask=0x40))
     assert excinfo.value.status_code == 422
+
+
+def test_record_interval_from_sample_rate() -> None:
+    with mock.patch("benchweave.web.board.AdcDriver", _FakeDriver):
+        manager = BoardManager()
+        manager._config = {"settings": {"sample_rate_hz": 100}}
+        assert manager._record_interval() == pytest.approx(0.01)
+        manager._config = {"settings": {"sample_rate_hz": None}}
+        assert manager._record_interval() == 0.0

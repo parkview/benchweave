@@ -28,7 +28,13 @@ from plugins.adc_6ch_12bit import (
 class _Recorder:
     """Appends converted samples to a CSV file, with a metadata header."""
 
-    def __init__(self, path: str, column_names: list[str], metadata: list[str]) -> None:
+    def __init__(
+        self,
+        path: str,
+        column_names: list[str],
+        metadata: list[str],
+        interval: float,
+    ) -> None:
         self.path = path
         self._file = open(path, "w", newline="")  # noqa: SIM115 (held open for streaming)
         for line in metadata:
@@ -36,12 +42,18 @@ class _Recorder:
         self._writer = csv.writer(self._file)
         self._writer.writerow(["timestamp", "elapsed_s", "counter", "averaged_n", *column_names])
         self._t0 = time.monotonic()
+        self._interval = interval  # seconds between records; 0 = no throttle
+        self._last_write = 0.0
 
     def write(self, counter: int, averaged_n: int, values: list[object]) -> None:
+        now = time.monotonic()
+        if self._interval > 0.0 and now - self._last_write < self._interval:
+            return
+        self._last_write = now
         self._writer.writerow(
             [
                 datetime.now().isoformat(timespec="microseconds"),
-                round(time.monotonic() - self._t0, 6),
+                round(now - self._t0, 6),
                 counter,
                 averaged_n,
                 *values,
@@ -153,6 +165,9 @@ class BoardManager:
         metadata = [f"profile: {profile_name}"]
         if note:
             metadata.append(f"note: {note}")
+        rate = self._config.get("settings", {}).get("sample_rate_hz")
+        if rate:
+            metadata.append(f"sample_rate_hz: {rate}")
         for key in CHANNEL_KEYS:
             ch = profile["channels"][key]
             if not ch.get("show", True):
@@ -165,6 +180,12 @@ class BoardManager:
             names.append(str(comp["name"]))
             metadata.append(f"computed: {comp['name']} ({comp['unit']}) = {comp['expr']}")
         return names, metadata
+
+    def _record_interval(self) -> float:
+        rate = self._config.get("settings", {}).get("sample_rate_hz")
+        if not rate:
+            return 0.0
+        return 1.0 / float(rate)
 
     # -- control -------------------------------------------------------------
 
@@ -191,7 +212,7 @@ class BoardManager:
                 if record:
                     path = capture_dir() / adc_capture_filename(self._serial)
                     names, metadata = self._record_meta(note)
-                    self._recorder = _Recorder(str(path), names, metadata)
+                    self._recorder = _Recorder(str(path), names, metadata, self._record_interval())
                 else:
                     self._recorder = None
                 self._record_path = self._recorder.path if self._recorder else None

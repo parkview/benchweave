@@ -43,6 +43,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "graph_points": 300,
         "graph_scroll": True,
         "retention_days": 7,
+        "sample_rate_hz": None,
     },
 }
 
