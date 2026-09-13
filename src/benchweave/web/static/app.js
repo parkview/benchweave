@@ -10,6 +10,7 @@ let chart = null;
 let eventSource = null;
 let lastCounter = null;
 let lastCounterAt = 0;
+let heldCurrentMax = null; // held peak of the current (right) axis; null = auto
 
 // -- Chart setup ------------------------------------------------------------
 
@@ -89,6 +90,7 @@ function addSample(counter, channels) {
     ds.data.push({ x: counter, y: ch.value });
     if (windowMode && ds.data.length > WINDOW_POINTS) ds.data.shift();
   });
+  updatePeakHold(channels);
   chart.update();
 
   // Live incoming rate, derived from the board's sample counter delta.
@@ -106,10 +108,11 @@ function resetChart() {
   chart.data.datasets.forEach((ds) => {
     ds.data.length = 0;
   });
-  chart.update();
   lastCounter = null;
   lastCounterAt = 0;
   document.getElementById("throughput").textContent = "";
+  clearPeakHoldState();
+  chart.update();
 }
 
 function currentGraphMode() {
@@ -124,6 +127,49 @@ function syncGraphMode() {
       if (ds.data.length > WINDOW_POINTS) ds.data.splice(0, ds.data.length - WINDOW_POINTS);
     });
   }
+  chart.update();
+}
+
+// -- Current-axis peak hold --------------------------------------------------
+
+function currentPeakOfSample(channels) {
+  let peak = null;
+  for (const ch of channels) {
+    if (ch.unit !== "A" || ch.value === null) continue;
+    if (peak === null || ch.value > peak) peak = ch.value;
+  }
+  return peak;
+}
+
+function niceCeiling(v) {
+  if (!isFinite(v) || v <= 0) return 1;
+  const mag = Math.pow(10, Math.floor(Math.log10(v)));
+  const norm = v / mag;
+  const nice = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10;
+  return nice * mag;
+}
+
+function updatePeakHold(channels) {
+  const peak = currentPeakOfSample(channels);
+  if (peak === null || peak <= 0) return;
+  if (heldCurrentMax === null || peak > heldCurrentMax) {
+    heldCurrentMax = peak;
+    chart.options.scales.y2.max = niceCeiling(heldCurrentMax);
+    document.getElementById("peak-current").textContent =
+      "Peak: " + Number(heldCurrentMax.toPrecision(4)) + " A";
+    document.getElementById("reset-peak").hidden = false;
+  }
+}
+
+function clearPeakHoldState() {
+  heldCurrentMax = null;
+  delete chart.options.scales.y2.max;
+  document.getElementById("peak-current").textContent = "";
+  document.getElementById("reset-peak").hidden = true;
+}
+
+function resetPeakHold() {
+  clearPeakHoldState();
   chart.update();
 }
 
@@ -548,6 +594,7 @@ window.addEventListener("DOMContentLoaded", () => {
   );
   document.getElementById("save-png").addEventListener("click", onSavePng);
   document.getElementById("reveal-png").addEventListener("click", onRevealPng);
+  document.getElementById("reset-peak").addEventListener("click", resetPeakHold);
   document.querySelectorAll(".tab").forEach((t) =>
     t.addEventListener("click", () => switchTab(t.dataset.tab))
   );
