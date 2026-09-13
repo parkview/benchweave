@@ -4,6 +4,7 @@ import pytest
 from fastapi import HTTPException
 
 from benchweave.web import app as web_app
+from benchweave.web.app import SSE_MIN_INTERVAL, _sse_interval
 from benchweave.web.board import BoardManager
 from plugins.adc_6ch_12bit.protocol import IdentifyInfo
 
@@ -102,3 +103,18 @@ def test_record_interval_from_sample_rate() -> None:
         assert manager._record_interval() == pytest.approx(0.01)
         manager._config = {"settings": {"sample_rate_hz": None}}
         assert manager._record_interval() == 0.0
+
+
+def test_sse_interval_honours_sample_rate() -> None:
+    # Slow rates throttle the graph to match the CSV recording rate.
+    assert _sse_interval({"settings": {"sample_rate_hz": 0.5}}) == pytest.approx(2.0)
+    assert _sse_interval({"settings": {"sample_rate_hz": 0.1}}) == pytest.approx(10.0)
+    # No rate -> the ~30 Hz live cap.
+    assert _sse_interval({"settings": {"sample_rate_hz": None}}) == pytest.approx(
+        SSE_MIN_INTERVAL
+    )
+    assert _sse_interval({}) == pytest.approx(SSE_MIN_INTERVAL)
+    # Rates faster than the live cap stay capped, not sped up.
+    assert _sse_interval({"settings": {"sample_rate_hz": 100}}) == pytest.approx(
+        SSE_MIN_INTERVAL
+    )

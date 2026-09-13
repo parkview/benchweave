@@ -119,6 +119,10 @@ Build from the CLI with `make` (uses the MRS-bundled `riscv-wch-elf-gcc` toolcha
   bounded by the fixed transfer time.
 - Timer-triggered ("cycle") sampling and external trigger (exact, jitter-free
   rate).
+- **Separate graph update rate (multi-mode graphing)** — the live graph currently
+  follows `sample_rate_hz` (same as recording). Explore a dedicated graph-update-rate
+  setting so the graph can run faster *or* slower than the recorded rate, and a
+  "live vs recorded-rate" graphing mode toggle.
 
 ## For AI agents
 
@@ -156,4 +160,5 @@ CRC-16/CCITT-FALSE over type..payload. Commands: `identify`, `set_averaging`,
 **Deferred work (next):** ADC scan mode + DMA (raw rate → UART ceiling); link
 the config `show` flag to firmware `SET_CHANNELS` so hidden channels are not
 sampled (speedup bounded by the fixed 6× u16 frame); timer-triggered "cycle"
-sampling and external trigger.
+sampling and external trigger; a separate graph-update-rate setting (the live
+graph currently follows `sample_rate_hz`; see the Deferred section above).
