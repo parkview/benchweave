@@ -193,3 +193,55 @@ def test_stream_worker_decimates_to_sample_rate() -> None:
 
     # Only the samples at 0.5, 1.0, 1.5 s survive the 0.5 s decimation.
     assert written == [0, 1, 2]
+
+
+def test_save_graph_png_names_after_csv(tmp_path) -> None:
+    manager = BoardManager()
+    manager._record_path = "/captures/adc_ABC_20260913_120000.csv"
+    with mock.patch("benchweave.web.board.capture_dir", return_value=tmp_path):
+        result = manager.save_graph_png(b"\x89PNG\r\n\x1a\n")
+    assert result["name"] == "adc_ABC_20260913_120000.png"
+    assert (tmp_path / "adc_ABC_20260913_120000.png").read_bytes() == b"\x89PNG\r\n\x1a\n"
+
+
+def test_save_graph_png_falls_back_without_recording(tmp_path) -> None:
+    manager = BoardManager()
+    manager._serial = "XYZ"
+    with mock.patch("benchweave.web.board.capture_dir", return_value=tmp_path):
+        result = manager.save_graph_png(b"png")
+    assert result["name"].startswith("adc_XYZ_")
+    assert result["name"].endswith(".png")
+    assert (tmp_path / result["name"]).read_bytes() == b"png"
+
+
+def test_api_rejects_invalid_png_data() -> None:
+    with pytest.raises(HTTPException) as excinfo:
+        web_app.graph_export(web_app.GraphExportBody(image="not-base64!!!"))
+    assert excinfo.value.status_code == 422
+
+
+def test_reveal_graph_png_opens_last_saved(tmp_path) -> None:
+    manager = BoardManager()
+    png = tmp_path / "adc_X.png"
+    png.write_bytes(b"png")
+    manager._last_png_path = str(png)
+    with (
+        mock.patch("benchweave.web.board.shutil.which", return_value="/usr/bin/dolphin"),
+        mock.patch("benchweave.web.board.subprocess.Popen") as popen,
+    ):
+        result = manager.reveal_graph_png()
+    assert result["path"] == str(png)
+    popen.assert_called_once_with(["/usr/bin/dolphin", "--select", str(png)])
+
+
+def test_reveal_graph_png_falls_back_to_capture_dir(tmp_path) -> None:
+    manager = BoardManager()
+    manager._last_png_path = None
+    with (
+        mock.patch("benchweave.web.board.capture_dir", return_value=tmp_path),
+        mock.patch("benchweave.web.board.shutil.which", return_value=None),
+        mock.patch("benchweave.web.board.subprocess.Popen") as popen,
+    ):
+        result = manager.reveal_graph_png()
+    assert result["path"] == str(tmp_path)
+    popen.assert_called_once_with(["xdg-open", str(tmp_path)])

@@ -127,6 +127,32 @@ function syncGraphMode() {
   chart.update();
 }
 
+async function onSavePng() {
+  if (!chart) return;
+  const dataUrl = chart.toBase64Image("image/png", 1.0);
+  const image = dataUrl.slice(dataUrl.indexOf(",") + 1);
+  try {
+    const res = await api("/api/graph/export", {
+      method: "POST",
+      body: JSON.stringify({ image }),
+    });
+    document.getElementById("graph-status").textContent = "saved";
+    const reveal = document.getElementById("reveal-png");
+    reveal.textContent = res.name;
+    reveal.hidden = false;
+  } catch (e) {
+    document.getElementById("graph-status").textContent = "save error: " + e.message;
+  }
+}
+
+async function onRevealPng() {
+  try {
+    await api("/api/graph/reveal", { method: "POST" });
+  } catch (e) {
+    document.getElementById("graph-status").textContent = "open error: " + e.message;
+  }
+}
+
 // -- API helpers ------------------------------------------------------------
 
 async function api(path, options = {}) {
@@ -520,6 +546,8 @@ window.addEventListener("DOMContentLoaded", () => {
   document.querySelectorAll('input[name="graph-mode"]').forEach((r) =>
     r.addEventListener("change", syncGraphMode)
   );
+  document.getElementById("save-png").addEventListener("click", onSavePng);
+  document.getElementById("reveal-png").addEventListener("click", onRevealPng);
   document.querySelectorAll(".tab").forEach((t) =>
     t.addEventListener("click", () => switchTab(t.dataset.tab))
   );

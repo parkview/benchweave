@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import shutil
+import subprocess
 import threading
 import time
 from contextlib import suppress
 from dataclasses import replace
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from plugins.adc_6ch_12bit import (
@@ -70,6 +73,20 @@ class _Recorder:
         self._file.close()
 
 
+def _open_file_manager(path: str) -> None:
+    """Open the user's file manager at ``path``, selecting it where supported."""
+    target = Path(path)
+    dolphin = shutil.which("dolphin")
+    if dolphin:
+        if target.is_file():
+            subprocess.Popen([dolphin, "--select", str(target)])
+        else:
+            subprocess.Popen([dolphin, str(target)])
+    else:
+        folder = target if target.is_dir() else target.parent
+        subprocess.Popen(["xdg-open", str(folder)])
+
+
 class BoardManager:
     """Owns one ADC board: lifecycle, control, live fan-out, and optional CSV recording."""
 
@@ -90,6 +107,7 @@ class BoardManager:
         self._recording = False
         self._recorder: _Recorder | None = None
         self._record_path: str | None = None
+        self._last_png_path: str | None = None
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -164,6 +182,23 @@ class BoardManager:
         self._config = config
         save_config(config)
         return self._config
+
+    def save_graph_png(self, data: bytes) -> dict[str, object]:
+        """Write a PNG chart image to the capture dir, named after the current CSV."""
+        if self._record_path:
+            name = Path(self._record_path).with_suffix(".png").name
+        else:
+            name = adc_capture_filename(self._serial, ext="png")
+        path = capture_dir() / name
+        path.write_bytes(data)
+        self._last_png_path = str(path)
+        return {"path": str(path), "name": name}
+
+    def reveal_graph_png(self) -> dict[str, object]:
+        """Open the file manager at the most recently saved PNG (or the capture dir)."""
+        target = self._last_png_path or str(capture_dir())
+        _open_file_manager(target)
+        return {"path": target}
 
     def convert_sample(self, sample: Sample) -> list[dict[str, object]]:
         return convert_channels(sample, self._config)

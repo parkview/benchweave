@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import time
 from collections.abc import AsyncIterator
@@ -49,6 +50,10 @@ class ChannelsBody(BaseModel):
 class StreamStartBody(BaseModel):
     record: bool = False
     note: str = ""
+
+
+class GraphExportBody(BaseModel):
+    image: str  # base64-encoded PNG (no data: URI prefix)
 
 
 @app.get("/api/boards")
@@ -117,6 +122,26 @@ def stream_start(body: StreamStartBody | None = None) -> dict[str, object]:
 @app.post("/api/stream/stop")
 def stream_stop() -> dict[str, object]:
     return manager.stop_stream()
+
+
+@app.post("/api/graph/export")
+def graph_export(body: GraphExportBody) -> dict[str, object]:
+    image = body.image
+    if "," in image:
+        image = image.split(",", 1)[1]
+    try:
+        data = base64.b64decode(image, validate=True)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=422, detail="invalid PNG data") from exc
+    return manager.save_graph_png(data)
+
+
+@app.post("/api/graph/reveal")
+def graph_reveal() -> dict[str, object]:
+    try:
+        return manager.reveal_graph_png()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.get("/api/stream")
