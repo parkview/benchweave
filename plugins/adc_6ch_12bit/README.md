@@ -39,6 +39,26 @@ Binary frames at 2 Mbps:
 
 Full spec: `docs/superpowers/specs/2026-09-11-adc-board-uart-driver-design.md`.
 
+## Sample rate
+
+A `SAMPLE` frame is 23 bytes, so the UART at 2 Mbps (200,000 bytes/s) tops out
+at ~8,700 frames/s. In practice the ADC conversion time is the limiter: the
+board does ~3,300 samples/s at averaging 0. Expected sample rates (6 channels):
+
+| Averaging | Est. SPS |
+|---|---|
+| 0 (raw) | ~3,300 |
+| 4 | ~1,140 |
+| 8 | ~610 |
+| 16 | ~320 |
+| 32 | ~160 |
+| 64 | ~81 |
+| 128 | ~41 |
+| 256 | ~20 |
+
+Averaging trades noise against speed; a `sample_rate_hz` recording setting
+(backend decimation) caps how many of those samples are recorded.
+
 ## Usage
 
 ```python
@@ -84,9 +104,15 @@ Build from the CLI with `make` (uses the MRS-bundled `riscv-wch-elf-gcc` toolcha
 
 ## Deferred
 
-- 6× WS2812 status LEDs (one per channel, data line PB1; green = active @15%,
-  red = inactive).
-- Timer-triggered ("cycle") sampling and external trigger.
+- **ADC scan mode + DMA** — replace the per-channel polled conversion with the
+  ADC scan sequencer + DMA, raising the raw rate from ~3,300 toward the ~8,700
+  frames/s UART ceiling.
+- **Link "show" to sampling** — stop sampling hidden channels (drive firmware
+  `SET_CHANNELS` from the config `show` flags), so unticking channels speeds up
+  collection. The `SAMPLE` frame stays fixed at 6× u16, so the speedup is
+  bounded by the fixed transfer time.
+- Timer-triggered ("cycle") sampling and external trigger (exact, jitter-free
+  rate).
 
 ## For AI agents
 
@@ -121,6 +147,7 @@ CRC-16/CCITT-FALSE over type..payload. Commands: `identify`, `set_averaging`,
 - Firmware: `make -C firmware/ch32v006e8r_adc`.
 - Captured data goes to `plugins/adc_6ch_12bit/captures/` (gitignored).
 
-**Deferred work (next):** 6× WS2812 status LEDs (PB1, green=active @15% /
-red=inactive, blocking refresh during config only); timer-triggered "cycle"
-sampling and external trigger (commands reserved, firmware NAKs them for now).
+**Deferred work (next):** ADC scan mode + DMA (raw rate → UART ceiling); link
+the config `show` flag to firmware `SET_CHANNELS` so hidden channels are not
+sampled (speedup bounded by the fixed 6× u16 frame); timer-triggered "cycle"
+sampling and external trigger.
