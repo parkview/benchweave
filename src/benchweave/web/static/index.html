@@ -35,6 +35,13 @@
     #analyse-chart-box { height: 380px; position: relative; }
     #analyse-viewer { border-color: #ccc; }
     #analyse-integral { margin-left: 1rem; font-variant-numeric: tabular-nums; }
+    #analyse-region-stats { margin-top: 0.75rem; }
+    #analyse-region-stats table { border-collapse: collapse; font-size: 0.9rem; }
+    #analyse-region-stats th, #analyse-region-stats td {
+      border: 1px solid #ddd; padding: 0.2rem 0.55rem; text-align: right;
+    }
+    #analyse-region-stats th:nth-child(-n+2), #analyse-region-stats td:nth-child(-n+2) { text-align: left; }
+    #analyse-region-stats td { font-variant-numeric: tabular-nums; }
     .tip { color: #666; font-size: 0.9rem; }
   </style>
 </head>
@@ -177,6 +184,13 @@
         <span id="analyse-integral"></span>
       </div>
       <div id="analyse-chart-box"><canvas id="analyse-chart"></canvas></div>
+      <div id="analyse-region-stats" hidden>
+        <span class="tip" id="analyse-region-summary"></span>
+        <table>
+          <thead><tr><th>Channel</th><th>Unit</th><th>Min</th><th>Mean</th><th>Max</th><th>RMS</th><th>Pk–Pk</th></tr></thead>
+          <tbody id="analyse-region-stats-body"></tbody>
+        </table>
+      </div>
     </section>
 
     <section id="analyse-retention" hidden>
@@ -189,6 +203,6 @@
     </section>
   </div>
 
-  <script src="/app.js?v=12"></script>
+  <script src="/app.js?v=13"></script>
 </body>
 </html>

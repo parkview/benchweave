@@ -4,14 +4,15 @@ Open items, newest first. Dates are when the item was logged.
 
 ## Analyse page — further analysis & measurement features
 
-Logged 2026-09-14 · **not started** (idea backlog).
+Logged 2026-09-14 · **partially done** — region inspector (stats + power) shipped; the rest are candidates.
 
 Candidate features for the Analyse tab, building on the existing CSV plot and
 brush-region Ah/Wh readout. Roughly in value-per-effort order; pick individually.
 
-- **Region inspector** — extend the existing brush selection to report min / mean /
-  max / RMS / peak-to-peak per channel, plus average & peak power (W) and dual
-  time cursors (Δt, ΔV, ΔI between two clicks).
+- **Region inspector** — ✅ **done 2026-09-14**: brushing a region now reports per-channel
+  min / mean / max / RMS / peak-to-peak, plus average & peak power (W) of the V×I pair.
+  **Deferred:** dual time cursors (Δt, ΔV, ΔI between two clicks) — a separate
+  click-to-place interaction, not the drag-brush.
 - **Edge / timing measurements** — rise/fall time (10–90%) and settling time on a
   chosen channel; threshold-crossing finder ("at what elapsed time did EN-Pin cross
   1.8 V?"); inrush detection (peak current, time-to-peak, transient energy).

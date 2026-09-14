@@ -38,9 +38,12 @@ time — voltage on the left axis, current on the right.
 
 - **Scroll** over the chart to zoom the time axis.
 - **Drag** across a region to select it and read off the energy it represents:
-  **Ah** (`∫ I dt`) for the current channel, and **Wh** (`∫ V·I dt`) for the
-  voltage channel chosen in the **Voltage channel** picker.
-- **Reset zoom** clears the zoom window and the selection.
+  **Ah** (`∫ I dt`) for the current channel, **Wh** (`∫ V·I dt`) for the
+  voltage channel chosen in the **Voltage channel** picker, and the **average
+  and peak power** (W) of that same V×I pair.
+- A **region inspector** table below the chart then lists, for every channel in
+  the selection, its **min / mean / max / RMS / peak-to-peak** over the region.
+- **Reset zoom** clears the zoom window, the selection, and the stats table.
 
 ## Projects and retention
 

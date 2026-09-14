@@ -728,6 +728,12 @@ function formatSigned(v) {
   return (v < 0 ? "-" : "+") + s;
 }
 
+function formatNumber(v) {
+  const a = Math.abs(v);
+  const s = a >= 100 ? a.toFixed(1) : a >= 1 ? a.toFixed(3) : a.toPrecision(3);
+  return (v < 0 ? "-" : "") + s;
+}
+
 async function refreshAnalyse() {
   try {
     await loadAnalyseProjects();
@@ -911,6 +917,7 @@ async function loadCapture(stem) {
     metaBits.push(`${data.duration_s.toFixed(1)} s`);
     document.getElementById("analyse-file-meta").textContent = " — " + metaBits.join(" · ");
     document.getElementById("analyse-integral").textContent = "";
+    clearRegionStats();
     renderVoltageSelect();
     renderAnalyseChart();
   } catch (e) {
@@ -991,6 +998,44 @@ function trapezoid(points, lo, hi) {
   return total;
 }
 
+function regionStats(points, lo, hi) {
+  let count = 0;
+  let min = Infinity;
+  let max = -Infinity;
+  let sum = 0;
+  let sumSq = 0;
+  for (const [t, v] of points) {
+    if (v == null || t < lo || t > hi) continue;
+    count += 1;
+    if (v < min) min = v;
+    if (v > max) max = v;
+    sum += v;
+    sumSq += v * v;
+  }
+  if (count === 0) return null;
+  const mean = sum / count;
+  return { count, min, max, mean, rms: Math.sqrt(sumSq / count), pp: max - min };
+}
+
+function powerRegionStats(V, I, lo, hi) {
+  let count = 0;
+  let sum = 0;
+  let peak = -Infinity;
+  const n = Math.min(V.length, I.length);
+  for (let k = 0; k < n; k++) {
+    const t = V[k][0];
+    if (t < lo || t > hi) continue;
+    const v = V[k][1] == null ? 0 : V[k][1];
+    const i = I[k][1] == null ? 0 : I[k][1];
+    const p = v * i;
+    count += 1;
+    sum += p;
+    if (p > peak) peak = p;
+  }
+  if (count === 0) return null;
+  return { mean: sum / count, peak };
+}
+
 function integrateRegion(x1, x2) {
   if (!analyseData) return null;
   const lo = Math.min(x1, x2);
@@ -1012,25 +1057,84 @@ function integrateRegion(x1, x2) {
 function updateIntegralReadout() {
   if (!analyseData || brushStart === null || brushEnd === null) return;
   const el = document.getElementById("analyse-integral");
+  const lo = Math.min(brushStart, brushEnd);
+  const hi = Math.max(brushStart, brushEnd);
   if (Math.abs(brushEnd - brushStart) < 1e-9) {
     el.textContent = "";
+    clearRegionStats();
     return;
   }
   const r = integrateRegion(brushStart, brushEnd);
   if (!r) {
     el.textContent = "";
+    clearRegionStats();
     return;
   }
   const bits = [];
   if (r.ah != null) bits.push(`${formatSigned(r.ah)} Ah`);
   if (r.wh != null) bits.push(`${formatSigned(r.wh)} Wh`);
+  const iIdx = currentSeriesIndex();
+  const vIdx = Number(document.getElementById("analyse-v-select").value) || 0;
+  if (iIdx >= 0 && vIdx >= 0 && vIdx < analyseData.series.length) {
+    const p = powerRegionStats(
+      analyseData.series[vIdx].points,
+      analyseData.series[iIdx].points,
+      lo,
+      hi
+    );
+    if (p) bits.push(`${formatNumber(p.mean)} W avg`, `${formatNumber(p.peak)} W pk`);
+  }
   el.textContent = "∫ " + bits.join("  ·  ");
+  renderRegionStats(lo, hi);
+}
+
+function clearRegionStats() {
+  document.getElementById("analyse-region-stats").hidden = true;
+  document.getElementById("analyse-region-stats-body").innerHTML = "";
+  document.getElementById("analyse-region-summary").textContent = "";
+}
+
+function renderRegionStats(lo, hi) {
+  const section = document.getElementById("analyse-region-stats");
+  const tbody = document.getElementById("analyse-region-stats-body");
+  tbody.innerHTML = "";
+  let any = false;
+  for (const s of analyseData.series) {
+    const st = regionStats(s.points, lo, hi);
+    if (!st) continue;
+    any = true;
+    const tr = document.createElement("tr");
+    const cells = [
+      s.name,
+      s.unit || "",
+      formatNumber(st.min),
+      formatNumber(st.mean),
+      formatNumber(st.max),
+      formatNumber(st.rms),
+      formatNumber(st.pp),
+    ];
+    for (const text of cells) {
+      const td = document.createElement("td");
+      td.textContent = text;
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+  if (!any) {
+    section.hidden = true;
+    document.getElementById("analyse-region-summary").textContent = "";
+    return;
+  }
+  document.getElementById("analyse-region-summary").textContent =
+    `Region ${formatNumber(lo)} s → ${formatNumber(hi)} s (Δ ${formatNumber(hi - lo)} s)`;
+  section.hidden = false;
 }
 
 function onResetZoom() {
   analyseZoom = { min: null, max: null };
   brushStart = brushEnd = null;
   document.getElementById("analyse-integral").textContent = "";
+  clearRegionStats();
   if (analyseChart) {
     delete analyseChart.options.scales.x.min;
     delete analyseChart.options.scales.x.max;
