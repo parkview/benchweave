@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import json
 import queue
 import shutil
 import subprocess
@@ -217,6 +218,17 @@ class BoardManager:
         profile = self._config["profiles"][profile_name]
         names: list[str] = []
         metadata = [f"profile: {profile_name}"]
+        metadata.append(
+            "config: "
+            + json.dumps(
+                {
+                    "active_profile": profile_name,
+                    "profile": profile,
+                    "settings": self._config.get("settings", {}),
+                },
+                separators=(",", ":"),
+            )
+        )
         if note:
             metadata.append(f"note: {note}")
         rate = self._config.get("settings", {}).get("sample_rate_hz")

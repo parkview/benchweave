@@ -12,17 +12,19 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from benchweave.web.board import BoardManager
+from benchweave.web.library import CaptureLibrary
 from plugins.adc_6ch_12bit.protocol import AVERAGING_CHOICES, CHANNEL_MASK_ALL
 
 STATIC_DIR = Path(__file__).parent / "static"
 SSE_MIN_INTERVAL = 0.033  # downsample the live view to ~30 Hz
 
 manager = BoardManager()
+library = CaptureLibrary()
 
 
 @asynccontextmanager
@@ -54,6 +56,23 @@ class StreamStartBody(BaseModel):
 
 class GraphExportBody(BaseModel):
     image: str  # base64-encoded PNG (no data: URI prefix)
+
+
+class ProjectCreateBody(BaseModel):
+    name: str
+    retention_days: int | None = None
+
+
+class ProjectRetentionBody(BaseModel):
+    retention_days: int | None = None
+
+
+class AssignProjectBody(BaseModel):
+    project: str | None = None
+
+
+class TrashBody(BaseModel):
+    stems: list[str]
 
 
 @app.get("/api/boards")
@@ -188,6 +207,95 @@ async def stream(request: Request) -> StreamingResponse:
             manager.unsubscribe(queue)
 
     return StreamingResponse(events(), media_type="text/event-stream")
+
+
+# -- capture library (Analyse tab) -----------------------------------------
+
+
+@app.get("/api/captures")
+def list_captures() -> list[dict[str, object]]:
+    return library.scan()
+
+
+@app.get("/api/captures/storage")
+def capture_storage() -> dict[str, object]:
+    return library.storage_stats()
+
+
+@app.get("/api/captures/retention")
+def retention_suggestions() -> dict[str, object]:
+    return {"expired": library.retention_scan()}
+
+
+@app.get("/api/captures/{stem}/data")
+def capture_data(stem: str) -> dict[str, object]:
+    path = library.file_for(stem, "csv")
+    if path is None:
+        raise HTTPException(status_code=404, detail=f"no CSV for '{stem}'")
+    try:
+        return library.parse_csv(path)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/captures/{stem}/file")
+def capture_file(stem: str, ext: str = "csv") -> FileResponse:
+    if ext not in ("csv", "png", "html"):
+        raise HTTPException(status_code=422, detail="ext must be csv, png, or html")
+    path = library.file_for(stem, ext)
+    if path is None:
+        raise HTTPException(status_code=404, detail=f"no {ext} for '{stem}'")
+    return FileResponse(path)
+
+
+@app.post("/api/captures/{stem}/project")
+def capture_assign(stem: str, body: AssignProjectBody) -> dict[str, object]:
+    try:
+        return library.assign_project(stem, body.project)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/captures/trash")
+def capture_trash(body: TrashBody) -> dict[str, object]:
+    if not body.stems:
+        raise HTTPException(status_code=422, detail="no stems to trash")
+    return library.trash(body.stems)
+
+
+@app.post("/api/captures/{stem}/apply-config")
+def capture_apply_config(stem: str) -> dict[str, Any]:
+    path = library.file_for(stem, "csv")
+    if path is None:
+        raise HTTPException(status_code=404, detail=f"no CSV for '{stem}'")
+    config = library.config_from_csv(path)
+    if config is None:
+        raise HTTPException(status_code=400, detail=f"no config metadata in '{stem}'")
+    try:
+        return manager.set_config(config)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/projects")
+def list_projects() -> list[dict[str, object]]:
+    return library.list_projects()
+
+
+@app.post("/api/projects")
+def create_project(body: ProjectCreateBody) -> dict[str, object]:
+    try:
+        return library.create_project(body.name, body.retention_days)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.patch("/api/projects/{name}")
+def patch_project(name: str, body: ProjectRetentionBody) -> dict[str, object]:
+    try:
+        return library.set_project_retention(name, body.retention_days)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")

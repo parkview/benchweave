@@ -32,6 +32,12 @@ adc_*.csv
 # Runtime-editable ADC channel config
 plugins/adc_6ch_12bit/config.json
 
+# Capture library SQLite overlay
+plugins/adc_6ch_12bit/library.db
+plugins/adc_6ch_12bit/library.db-wal
+plugins/adc_6ch_12bit/library.db-shm
+plugins/adc_6ch_12bit/library.db-journal
+
 # Local configuration and credentials; keep shareable templates
 .env
 .env.*

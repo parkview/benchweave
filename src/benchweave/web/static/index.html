@@ -22,6 +22,19 @@
     #channel-table { border-collapse: collapse; margin-top: 0.5rem; }
     #channel-table th, #channel-table td { border: 1px solid #ddd; padding: 0.3rem 0.5rem; }
     #channel-table td input { width: 6rem; }
+    #tab-analyse section { max-width: none; }
+    .frames { display: flex; gap: 1rem; flex-wrap: wrap; }
+    .frames section { flex: 1; min-width: 18rem; }
+    .file-list { list-style: none; padding: 0; margin: 0.5rem 0; max-height: 18rem; overflow-y: auto; }
+    .file-list li { display: flex; align-items: center; gap: 0.5rem; padding: 0.25rem 0; border-bottom: 1px solid #eee; flex-wrap: wrap; }
+    .file-list .fname { cursor: pointer; color: #0645ad; }
+    .file-list .fname:hover { text-decoration: underline; }
+    .file-list .fmeta { color: #777; font-size: 0.85rem; margin-left: auto; }
+    .file-list li.expired .fname { font-weight: 600; color: #b3261e; }
+    .file-list select { font-size: 0.85rem; }
+    #analyse-chart-box { height: 380px; position: relative; }
+    #analyse-viewer { border-color: #ccc; }
+    #analyse-integral { margin-left: 1rem; font-variant-numeric: tabular-nums; }
   </style>
 </head>
 <body>
@@ -30,6 +43,7 @@
   <div class="tabs">
     <button class="tab active" data-tab="control">Graph</button>
     <button class="tab" data-tab="setup">Configuration</button>
+    <button class="tab" data-tab="analyse">Analyse</button>
   </div>
 
   <div id="tab-control">
@@ -105,6 +119,65 @@
         <tbody></tbody>
       </table>
       <button id="add-computed">Add computed</button>
+    </section>
+  </div>
+
+  <div id="tab-analyse" hidden>
+    <section id="analyse-controls">
+      <label>Project
+        <select id="analyse-project-select"></select>
+      </label>
+      <input type="text" id="analyse-new-project" placeholder="new project name">
+      <label>Retention (days):
+        <input type="number" id="analyse-project-retention" min="0" step="1" placeholder="inherit">
+      </label>
+      <button id="analyse-new-project-btn">New project</button>
+      <button id="analyse-set-retention">Set retention</button>
+      <button id="analyse-refresh">Refresh</button>
+      <span id="analyse-status"></span>
+    </section>
+
+    <section id="analyse-storage">
+      <h3>Storage</h3>
+      <div id="analyse-storage-total"></div>
+      <table id="analyse-storage-table">
+        <thead><tr><th>Project</th><th>Files</th><th>Size</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <div class="frames">
+      <section id="analyse-csv-frame">
+        <h3>CSV files</h3>
+        <ul id="analyse-csv-list" class="file-list"></ul>
+      </section>
+      <section id="analyse-png-frame">
+        <h3>PNG files</h3>
+        <ul id="analyse-png-list" class="file-list"></ul>
+      </section>
+    </div>
+
+    <section id="analyse-viewer" hidden>
+      <div>
+        <strong id="analyse-file-name"></strong>
+        <span id="analyse-file-meta"></span>
+        <button id="analyse-apply-config">Apply config to board</button>
+        <label>Voltage channel:
+          <select id="analyse-v-select"></select>
+        </label>
+        <button id="analyse-reset-zoom">Reset zoom</button>
+        <span id="analyse-hint">Drag to select a region · scroll to zoom</span>
+        <span id="analyse-integral"></span>
+      </div>
+      <div id="analyse-chart-box"><canvas id="analyse-chart"></canvas></div>
+    </section>
+
+    <section id="analyse-retention" hidden>
+      <h3>Retention suggestions</h3>
+      <p>These captures have reached their retention date. Review, then move to
+      trash — files stay recoverable from the OS trash for a while.</p>
+      <ul id="analyse-expired-list" class="file-list"></ul>
+      <button id="analyse-trash-selected">Move selected to trash</button>
     </section>
   </div>
 
