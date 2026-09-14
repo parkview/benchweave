@@ -2,6 +2,25 @@
 
 Open items, newest first. Dates are when the item was logged.
 
+## Mechanical travel kit (v1.0)
+
+Logged 2026-09-14 · **not started**.
+
+Investigate how the bench components can be transported and set up on a table as
+a compact kit, and how each board should be housed/protected.
+
+**Components to enclose:**
+- ADC PCB (currently bare on the table) — add protection, e.g. a 2 mm clear-acrylic
+  lid; same approach for other boards as they're integrated.
+- 7-port USB hub (separate self-designed project) — dedicate a couple of ports to
+  switchable power so an MCP service can power-cycle/reset anything plugged in.
+- MadeInOz portable USB-PD bench power supply (in development) — needs housing.
+- CH32V Link-e programmer.
+- Logic analyser.
+- USB camera (EMeet C960).
+
+Treat this as v1.0 of the travel kit.
+
 ## Contribute ADC plugin upstream
 
 Logged 2026-09-14 · **deferred** — user returns to this **Friday 2026-09-18**.
