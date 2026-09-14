@@ -157,6 +157,22 @@ def test_capture_requires_connection(tmp_path: Path) -> None:
         m.capture_samples(3)
 
 
+def test_capture_skips_failed_computed_channel(
+    manager: BoardManager, tmp_path: Path
+) -> None:
+    manager._config["profiles"]["default"]["computed"] = [
+        {"name": "Bad", "unit": "A", "expr": "A0/0", "show": True}
+    ]
+    _driver_of(manager).samples = iter(_samples(3))
+    with mock.patch("benchweave.web.board.capture_dir", return_value=tmp_path):
+        result = manager.capture_samples(3)
+
+    channels = cast(list[dict[str, object]], result["channels"])
+    keys = {c["key"] for c in channels}
+    assert "Bad" not in keys  # the failed computed channel is skipped, not summed
+    assert keys  # physical channels still summarized
+
+
 def test_sample_once_returns_converted_sample(manager: BoardManager) -> None:
     manager._driver.sample_once = mock.Mock(  # type: ignore[method-assign]
         return_value=Sample(counter=9, channels=(0, 1, 2, 3, 4, 5), averaged_n=0)

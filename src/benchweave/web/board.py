@@ -14,7 +14,7 @@ from contextlib import suppress
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from plugins.adc_6ch_12bit import (
     CHANNEL_KEYS,
@@ -368,7 +368,9 @@ class BoardManager:
                     collected += 1
                     for c in channels:
                         key = str(c["key"])
-                        value = float(c["value"])
+                        value = cast(float | None, c["value"])
+                        if value is None:
+                            continue  # a computed channel that failed to evaluate
                         if key not in mins:
                             order.append(key)
                             names_by_key[key] = str(c["name"])
