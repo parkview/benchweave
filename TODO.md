@@ -21,6 +21,10 @@ a compact kit, and how each board should be housed/protected.
 
 Treat this as v1.0 of the travel kit.
 
+**Scope split:** the switchable-power ports pair with an MCP per-port power tool
+(software, this codebase — reuse `src/benchweave/mcp_server.py`); the enclosure
+itself is mechanical/CAD, tracked outside this repo.
+
 ## Contribute ADC plugin upstream
 
 Logged 2026-09-14 · **deferred** — user returns to this **Friday 2026-09-18**.
