@@ -43,7 +43,12 @@ time — voltage on the left axis, current on the right.
   and peak power** (W) of that same V×I pair.
 - A **region inspector** table below the chart then lists, for every channel in
   the selection, its **min / mean / max / RMS / peak-to-peak** over the region.
-- **Reset zoom** clears the zoom window, the selection, and the stats table.
+- An **edge / timing** readout measures a single transition in the brushed
+  region: pick the **Edge channel**, and it reports the direction, the level
+  step (`from → to`), the **10–90% rise/fall time**, and the **settling time**
+  (from the 10% crossing to within a settable tolerance of the final value).
+  Brush around one transition at a time, with a little lead-in and lead-out.
+- **Reset zoom** clears the zoom window, the selection, and the readouts.
 
 ## Projects and retention
 

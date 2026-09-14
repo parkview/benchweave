@@ -4,7 +4,7 @@ Open items, newest first. Dates are when the item was logged.
 
 ## Analyse page — further analysis & measurement features
 
-Logged 2026-09-14 · **partially done** — region inspector (stats + power) shipped; the rest are candidates.
+Logged 2026-09-14 · **partially done** — region inspector + edge/timing shipped; the rest are candidates.
 
 Candidate features for the Analyse tab, building on the existing CSV plot and
 brush-region Ah/Wh readout. Roughly in value-per-effort order; pick individually.
@@ -13,9 +13,11 @@ brush-region Ah/Wh readout. Roughly in value-per-effort order; pick individually
   min / mean / max / RMS / peak-to-peak, plus average & peak power (W) of the V×I pair.
   **Deferred:** dual time cursors (Δt, ΔV, ΔI between two clicks) — a separate
   click-to-place interaction, not the drag-brush.
-- **Edge / timing measurements** — rise/fall time (10–90%) and settling time on a
-  chosen channel; threshold-crossing finder ("at what elapsed time did EN-Pin cross
-  1.8 V?"); inrush detection (peak current, time-to-peak, transient energy).
+- **Edge / timing measurements** — ✅ **done 2026-09-14** (rise/fall + settling): brushing
+  around a single transition reports the direction, level step, 10–90% rise/fall time,
+  and settling time (from the 10% crossing). **Deferred:** threshold-crossing finder
+  (scan for a threshold and list crossing times), and inrush detection (peak current +
+  time-to-peak + transient energy).
 - **Signal analysis** — frequency / period / duty cycle on a periodic channel
   (zero-crossing or FFT).
 - **Compare & regression** — overlay two captures (aligned or time-offset); diff a

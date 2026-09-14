@@ -734,6 +734,13 @@ function formatNumber(v) {
   return (v < 0 ? "-" : "") + s;
 }
 
+function formatTime(t) {
+  if (t == null || !Number.isFinite(t)) return "—";
+  if (t < 0.001) return (t * 1e6).toFixed(0) + " µs";
+  if (t < 1) return (t * 1e3).toFixed(2) + " ms";
+  return t.toFixed(3) + " s";
+}
+
 async function refreshAnalyse() {
   try {
     await loadAnalyseProjects();
@@ -918,7 +925,9 @@ async function loadCapture(stem) {
     document.getElementById("analyse-file-meta").textContent = " — " + metaBits.join(" · ");
     document.getElementById("analyse-integral").textContent = "";
     clearRegionStats();
+    clearEdgeAnalysis();
     renderVoltageSelect();
+    renderEdgeSelect();
     renderAnalyseChart();
   } catch (e) {
     document.getElementById("analyse-status").textContent = "plot error: " + e.message;
@@ -1062,12 +1071,14 @@ function updateIntegralReadout() {
   if (Math.abs(brushEnd - brushStart) < 1e-9) {
     el.textContent = "";
     clearRegionStats();
+    clearEdgeAnalysis();
     return;
   }
   const r = integrateRegion(brushStart, brushEnd);
   if (!r) {
     el.textContent = "";
     clearRegionStats();
+    clearEdgeAnalysis();
     return;
   }
   const bits = [];
@@ -1086,6 +1097,7 @@ function updateIntegralReadout() {
   }
   el.textContent = "∫ " + bits.join("  ·  ");
   renderRegionStats(lo, hi);
+  renderEdgeAnalysis(lo, hi);
 }
 
 function clearRegionStats() {
@@ -1130,11 +1142,129 @@ function renderRegionStats(lo, hi) {
   section.hidden = false;
 }
 
+function regionPoints(points, lo, hi) {
+  const out = [];
+  for (const [t, v] of points) {
+    if (v != null && t >= lo && t <= hi) out.push([t, v]);
+  }
+  return out;
+}
+
+function meanLevel(pts) {
+  if (pts.length === 0) return null;
+  let s = 0;
+  for (const [, v] of pts) s += v;
+  return s / pts.length;
+}
+
+// First time the series crosses `level`, travelling up (dir=+1) or down (dir=-1).
+// Interpolates between samples; null if it never crosses.
+function crossTime(pts, level, dir) {
+  for (let k = 0; k < pts.length - 1; k++) {
+    const [t0, v0] = pts[k];
+    const [t1, v1] = pts[k + 1];
+    const below0 = dir > 0 ? v0 < level : v0 > level;
+    const below1 = dir > 0 ? v1 < level : v1 > level;
+    if (below0 === below1) continue;
+    const frac = (level - v0) / (v1 - v0);
+    return t0 + frac * (t1 - t0);
+  }
+  return null;
+}
+
+function edgeAnalysis(points, lo, hi, settlePct) {
+  const pts = regionPoints(points, lo, hi);
+  if (pts.length < 3) return null;
+  const n = pts.length;
+  const headN = Math.max(1, Math.floor(n * 0.15));
+  const tailN = Math.max(1, Math.floor(n * 0.15));
+  const baseline = meanLevel(pts.slice(0, headN));
+  const final = meanLevel(pts.slice(n - tailN));
+  if (baseline == null || final == null) return null;
+  const step = final - baseline;
+  const scale = Math.max(Math.abs(baseline), Math.abs(final), 1e-12);
+  if (Math.abs(step) < 0.005 * scale) return null; // flat region: no transition
+
+  const rising = step > 0;
+  const dir = rising ? 1 : -1;
+  const t10 = crossTime(pts, baseline + 0.10 * step, dir);
+  const t90 = crossTime(pts, baseline + 0.90 * step, dir);
+  const riseTime = t10 != null && t90 != null ? t90 - t10 : null;
+
+  const tol = (settlePct / 100) * Math.abs(step);
+  const bandLo = final - tol;
+  const bandHi = final + tol;
+  let lastOutside = -1;
+  for (let k = 0; k < n; k++) {
+    if (t10 != null && pts[k][0] < t10) continue;
+    const v = pts[k][1];
+    if (v < bandLo || v > bandHi) lastOutside = k;
+  }
+  const t0 = t10 != null ? t10 : pts[0][0];
+  let settleTime = null;
+  if (lastOutside < 0) settleTime = 0;
+  else if (lastOutside + 1 < n) settleTime = Math.max(0, pts[lastOutside + 1][0] - t0);
+
+  return { rising, baseline, final, step, riseTime, settleTime };
+}
+
+function clearEdgeAnalysis() {
+  document.getElementById("analyse-edge").hidden = true;
+  document.getElementById("analyse-edge-readout").textContent = "";
+}
+
+function renderEdgeSelect() {
+  const sel = document.getElementById("analyse-edge-select");
+  sel.innerHTML = "";
+  const series = analyseData.series;
+  let defIdx = series.findIndex((s) => (s.unit || "").toUpperCase() === "V");
+  if (defIdx < 0) defIdx = 0;
+  series.forEach((s, i) => {
+    const o = document.createElement("option");
+    o.value = String(i);
+    o.textContent = `${s.name} (${s.unit || "?"})`;
+    sel.appendChild(o);
+  });
+  sel.value = String(defIdx);
+}
+
+function renderEdgeAnalysis(lo, hi) {
+  const panel = document.getElementById("analyse-edge");
+  const readout = document.getElementById("analyse-edge-readout");
+  const sel = document.getElementById("analyse-edge-select");
+  if (!analyseData || brushStart === null || brushEnd === null) {
+    panel.hidden = true;
+    return;
+  }
+  const idx = Number(sel.value) || 0;
+  const series = analyseData.series[idx];
+  if (!series) {
+    panel.hidden = true;
+    return;
+  }
+  const rawPct = Number(document.getElementById("analyse-settle-pct").value);
+  const settlePct = Number.isFinite(rawPct) && rawPct > 0 ? rawPct : 2;
+  const e = edgeAnalysis(series.points, lo, hi, settlePct);
+  if (!e) {
+    readout.textContent = "no clear transition in the region";
+    panel.hidden = false;
+    return;
+  }
+  const bits = [];
+  bits.push(e.rising ? "rising" : "falling");
+  bits.push(`${formatNumber(e.baseline)} → ${formatNumber(e.final)} ${series.unit || ""}`);
+  bits.push(`t10–90 ${e.riseTime != null ? formatTime(e.riseTime) : "—"}`);
+  bits.push(`settle ±${settlePct}% ${e.settleTime != null ? formatTime(e.settleTime) : "—"}`);
+  readout.textContent = bits.join("  ·  ");
+  panel.hidden = false;
+}
+
 function onResetZoom() {
   analyseZoom = { min: null, max: null };
   brushStart = brushEnd = null;
   document.getElementById("analyse-integral").textContent = "";
   clearRegionStats();
+  clearEdgeAnalysis();
   if (analyseChart) {
     delete analyseChart.options.scales.x.min;
     delete analyseChart.options.scales.x.max;
@@ -1256,6 +1386,8 @@ window.addEventListener("DOMContentLoaded", () => {
   document.getElementById("analyse-apply-config").addEventListener("click", onApplyConfig);
   document.getElementById("analyse-reset-zoom").addEventListener("click", onResetZoom);
   document.getElementById("analyse-v-select").addEventListener("change", onVoltageChange);
+  document.getElementById("analyse-edge-select").addEventListener("change", updateIntegralReadout);
+  document.getElementById("analyse-settle-pct").addEventListener("input", updateIntegralReadout);
 
   discover();
 });
