@@ -32,10 +32,13 @@ class AdcBoard:
     info: IdentifyInfo
 
 
-def adc_capture_filename(serial: str | None, *, ext: str = "csv") -> str:
-    """Build a descriptive capture filename: ``adc_<serial>_<YYYYmmdd_HHMMSS>.<ext>``."""
+def adc_capture_filename(
+    serial: str | None, *, ext: str = "csv", tag: str | None = None
+) -> str:
+    """Build a descriptive capture filename: ``adc_<serial>[_<tag>]_<YYYYmmdd_HHMMSS>.<ext>``."""
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return f"adc_{serial or 'unknown'}_{stamp}.{ext}"
+    middle = f"_{tag}" if tag else ""
+    return f"adc_{serial or 'unknown'}{middle}_{stamp}.{ext}"
 
 
 def capture_dir() -> Path:

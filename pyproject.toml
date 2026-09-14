@@ -24,7 +24,12 @@ classifiers = [
   "Programming Language :: Python :: 3.13",
   "Typing :: Typed"
 ]
-dependencies = ["pyserial>=3.5", "fastapi>=0.110", "uvicorn>=0.27"]
+dependencies = [
+    "pyserial>=3.5",
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+    "mcp>=2.2.0",
+]
 
 [dependency-groups]
 dev = [
@@ -38,6 +43,7 @@ dev = [
 
 [project.scripts]
 benchweave = "benchweave.__main__:main"
+benchweave-mcp = "benchweave.mcp_server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/benchweave", "plugins"]

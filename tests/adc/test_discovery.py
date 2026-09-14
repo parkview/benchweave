@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 from unittest import mock
 
-from plugins.adc_6ch_12bit.discovery import WCH_VENDOR_ID, discover_adc_boards
+from plugins.adc_6ch_12bit.discovery import WCH_VENDOR_ID, adc_capture_filename, discover_adc_boards
 from plugins.adc_6ch_12bit.driver import AdcTimeout
 from plugins.adc_6ch_12bit.protocol import IdentifyInfo
 
@@ -53,3 +53,22 @@ def test_discover_returns_empty_when_no_board() -> None:
         boards = discover_adc_boards()
 
     assert boards == []
+
+
+def test_adc_capture_filename_includes_tag() -> None:
+    tagged = adc_capture_filename("ABC", tag="MCP")
+    assert tagged.startswith("adc_ABC_MCP_")
+    assert tagged.endswith(".csv")
+
+
+def test_adc_capture_filename_omits_tag_when_absent() -> None:
+    name = adc_capture_filename("ABC")
+    assert name.startswith("adc_ABC_")
+    assert "_MCP_" not in name
+    assert name.endswith(".csv")
+
+
+def test_adc_capture_filename_respects_extension_and_unknown_serial() -> None:
+    name = adc_capture_filename(None, ext="png", tag="MCP")
+    assert name.startswith("adc_unknown_MCP_")
+    assert name.endswith(".png")

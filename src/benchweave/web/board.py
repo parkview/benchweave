@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import queue
 import shutil
 import subprocess
 import threading
@@ -249,6 +250,155 @@ class BoardManager:
             return CHANNEL_MASK_ALL
         return mask if 0 <= mask <= CHANNEL_MASK_ALL else CHANNEL_MASK_ALL
 
+    # -- capture -------------------------------------------------------------
+
+    def sample_once(self) -> dict[str, object]:
+        """Read a single sample (in single-shot mode) and return converted values."""
+        with self._lock:
+            self._require_idle()
+            sample = self._driver.sample_once()
+            return {
+                "counter": sample.counter,
+                "averaged_n": sample.averaged_n,
+                "channels": self.convert_sample(sample),
+            }
+
+    def capture_samples(
+        self, count: int, *, tag: str | None = None, timeout: float = 10.0
+    ) -> dict[str, object]:
+        """Capture exactly ``count`` samples to CSV; return a summary with per-channel stats."""
+        return self._capture(count=count, tag=tag, timeout=timeout)
+
+    def capture_seconds(self, seconds: float, *, tag: str | None = None) -> dict[str, object]:
+        """Capture ``seconds`` seconds of samples to CSV; return a compact summary."""
+        return self._capture(seconds=seconds, tag=tag)
+
+    def _capture(
+        self,
+        *,
+        count: int | None = None,
+        seconds: float | None = None,
+        tag: str | None = None,
+        timeout: float = 10.0,
+    ) -> dict[str, object]:
+        """Run a bounded capture: stream samples into a CSV and summarize the channels.
+
+        Exactly one of ``count`` (fixed number of samples) or ``seconds`` (a
+        duration) must be given. A background thread drains ``iter_samples`` into
+        a queue with an end-of-stream sentinel, so a board that stops sending
+        never blocks the deadline check on the main thread. The return value is a
+        compact summary (path, count, actual rate, per-channel min/mean/max) - the
+        full record lives in the CSV, so a long capture never balloons the response.
+        """
+        with self._lock:
+            self._require_idle()
+            if (count is None) == (seconds is None):
+                raise ValueError("specify exactly one of count or seconds")
+            if count is not None and count <= 0:
+                raise ValueError("count must be positive")
+            if seconds is not None and seconds <= 0:
+                raise ValueError("seconds must be positive")
+
+            if count is not None:
+                note = f"{tag or 'capture'}: {count} samples"
+                duration = float(timeout)
+                target: int | None = count
+            else:
+                assert seconds is not None  # guaranteed by the either/or check above
+                note = f"{tag or 'capture'}: {seconds:.3f} s"
+                duration = float(seconds)
+                target = None
+
+            names, metadata = self._record_meta(note)
+            path = capture_dir() / adc_capture_filename(self._serial, tag=tag)
+            recorder = _Recorder(str(path), names, metadata)
+            inbox: queue.Queue[Sample | None] = queue.Queue()
+
+            def pump() -> None:
+                try:
+                    for sample in self._driver.iter_samples():
+                        inbox.put(sample)
+                finally:
+                    inbox.put(None)  # end-of-stream sentinel
+
+            self._driver.start_stream()
+            self._streaming = True
+            self._counter = 0
+            worker = threading.Thread(target=pump, name="adc-capture", daemon=True)
+            worker.start()
+
+            start = time.monotonic()
+            deadline = start + duration
+            collected = 0
+            mins: dict[str, float] = {}
+            maxs: dict[str, float] = {}
+            totals: dict[str, float] = {}
+            counts: dict[str, int] = {}
+            names_by_key: dict[str, str] = {}
+            units_by_key: dict[str, str] = {}
+            order: list[str] = []
+            try:
+                while (target is None or collected < target) and time.monotonic() < deadline:
+                    try:
+                        sample = inbox.get(timeout=0.1)
+                    except queue.Empty:
+                        continue
+                    if sample is None:
+                        break
+                    sample = replace(sample, counter=self._counter)
+                    self._counter += 1
+                    channels = self.convert_sample(sample)
+                    recorder.write(
+                        sample.counter,
+                        sample.averaged_n,
+                        [c["value"] for c in channels],
+                    )
+                    collected += 1
+                    for c in channels:
+                        key = str(c["key"])
+                        value = float(c["value"])
+                        if key not in mins:
+                            order.append(key)
+                            names_by_key[key] = str(c["name"])
+                            units_by_key[key] = str(c["unit"])
+                            mins[key] = value
+                            maxs[key] = value
+                            totals[key] = 0.0
+                            counts[key] = 0
+                        mins[key] = min(mins[key], value)
+                        maxs[key] = max(maxs[key], value)
+                        totals[key] += value
+                        counts[key] += 1
+                if target is not None and collected < target:
+                    raise RuntimeError(
+                        f"capture timed out: got {collected}/{target} samples in {duration:.1f}s"
+                    )
+                elapsed = time.monotonic() - start
+                channels_summary = [
+                    {
+                        "key": key,
+                        "name": names_by_key[key],
+                        "unit": units_by_key[key],
+                        "min": round(mins[key], 6),
+                        "mean": round(totals[key] / counts[key], 6),
+                        "max": round(maxs[key], 6),
+                    }
+                    for key in order
+                ]
+                return {
+                    "path": str(path),
+                    "count": collected,
+                    "duration_s": round(elapsed, 3),
+                    "samples_per_second": round(collected / elapsed, 1) if elapsed > 0 else 0.0,
+                    "channels": channels_summary,
+                }
+            finally:
+                with suppress(Exception):
+                    self._driver.stop_stream()
+                self._streaming = False
+                worker.join(timeout=1.0)
+                recorder.close()
+
     # -- control -------------------------------------------------------------
 
     def set_averaging(self, n: int) -> dict[str, object]:
@@ -380,9 +530,9 @@ class BoardManager:
             pass
 
     def _publish(self, sample: Sample) -> None:
-        for queue in self._subscribers:
+        for q in self._subscribers:
             with suppress(asyncio.QueueFull):
-                queue.put_nowait(sample)
+                q.put_nowait(sample)
 
     # -- guards --------------------------------------------------------------
 
