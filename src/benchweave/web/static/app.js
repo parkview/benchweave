@@ -1111,9 +1111,9 @@ function renderRegionStats(lo, hi) {
   const tbody = document.getElementById("analyse-region-stats-body");
   tbody.innerHTML = "";
   let any = false;
-  for (const s of analyseData.series) {
+  analyseData.series.forEach((s, i) => {
     const st = regionStats(s.points, lo, hi);
-    if (!st) continue;
+    if (!st) return;
     any = true;
     const tr = document.createElement("tr");
     const cells = [
@@ -1125,13 +1125,14 @@ function renderRegionStats(lo, hi) {
       formatNumber(st.rms),
       formatNumber(st.pp),
     ];
-    for (const text of cells) {
+    cells.forEach((text, j) => {
       const td = document.createElement("td");
       td.textContent = text;
+      if (j === 0) td.style.color = COLORS[i % COLORS.length];
       tr.appendChild(td);
-    }
+    });
     tbody.appendChild(tr);
-  }
+  });
   if (!any) {
     section.hidden = true;
     document.getElementById("analyse-region-summary").textContent = "";
