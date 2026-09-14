@@ -2,6 +2,44 @@
 
 Open items, newest first. Dates are when the item was logged.
 
+## Analyse page — further analysis & measurement features
+
+Logged 2026-09-14 · **not started** (idea backlog).
+
+Candidate features for the Analyse tab, building on the existing CSV plot and
+brush-region Ah/Wh readout. Roughly in value-per-effort order; pick individually.
+
+- **Region inspector** — extend the existing brush selection to report min / mean /
+  max / RMS / peak-to-peak per channel, plus average & peak power (W) and dual
+  time cursors (Δt, ΔV, ΔI between two clicks).
+- **Edge / timing measurements** — rise/fall time (10–90%) and settling time on a
+  chosen channel; threshold-crossing finder ("at what elapsed time did EN-Pin cross
+  1.8 V?"); inrush detection (peak current, time-to-peak, transient energy).
+- **Signal analysis** — frequency / period / duty cycle on a periodic channel
+  (zero-crossing or FFT).
+- **Compare & regression** — overlay two captures (aligned or time-offset); diff a
+  run against a saved "golden" capture and flag channels drifting outside a
+  tolerance band.
+- **Data integrity** — CSV health check (duplicate columns, elapsed-time gaps,
+  non-monotonic timestamps, SPS anomalies); measured-vs-configured sample rate.
+- **Power / battery** — full-trace Ah/Wh totals (not just brushed regions);
+  sleep/wake profiling and battery-life estimate; internal resistance from a load
+  step (ΔV/ΔI).
+- **Reporting & automation** — self-contained HTML report export; per-channel
+  min/max assertion checks (mini pass/fail); an MCP tool to load a capture and
+  answer questions about it.
+
+**Low priority (keep in mind for later):**
+
+- **FFT spectrum view** — find switching noise / ringing / unexpected oscillation.
+  Most captures run at low SPS (see the sample-rate table in
+  `plugins/adc_6ch_12bit/README.md`), so spectral bandwidth is limited; revisit if
+  higher-rate captures become common.
+
+**Note:** CSVs store *converted* engineering values, not raw 12-bit counts, so
+LSB-level analysis (missing codes, noise floor in counts) needs a "record raw
+counts" option before it becomes possible.
+
 ## Mechanical travel kit (v1.0)
 
 Logged 2026-09-14 · **not started**.
