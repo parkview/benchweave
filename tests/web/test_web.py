@@ -1,3 +1,4 @@
+from pathlib import Path
 from unittest import mock
 
 import pytest
@@ -267,7 +268,7 @@ def test_stop_after_pause_closes_recorder() -> None:
         assert recorder.closed is True
 
 
-def test_save_graph_png_names_after_csv(tmp_path) -> None:
+def test_save_graph_png_names_after_csv(tmp_path: Path) -> None:
     manager = BoardManager()
     manager._record_path = "/captures/adc_ABC_20260913_120000.csv"
     with mock.patch("benchweave.web.board.capture_dir", return_value=tmp_path):
@@ -276,14 +277,14 @@ def test_save_graph_png_names_after_csv(tmp_path) -> None:
     assert (tmp_path / "adc_ABC_20260913_120000.png").read_bytes() == b"\x89PNG\r\n\x1a\n"
 
 
-def test_save_graph_png_falls_back_without_recording(tmp_path) -> None:
+def test_save_graph_png_falls_back_without_recording(tmp_path: Path) -> None:
     manager = BoardManager()
     manager._serial = "XYZ"
     with mock.patch("benchweave.web.board.capture_dir", return_value=tmp_path):
         result = manager.save_graph_png(b"png")
-    assert result["name"].startswith("adc_XYZ_")
-    assert result["name"].endswith(".png")
-    assert (tmp_path / result["name"]).read_bytes() == b"png"
+    assert str(result["name"]).startswith("adc_XYZ_")
+    assert str(result["name"]).endswith(".png")
+    assert (tmp_path / str(result["name"])).read_bytes() == b"png"
 
 
 def test_api_rejects_invalid_png_data() -> None:
@@ -292,7 +293,7 @@ def test_api_rejects_invalid_png_data() -> None:
     assert excinfo.value.status_code == 422
 
 
-def test_reveal_graph_png_opens_last_saved(tmp_path) -> None:
+def test_reveal_graph_png_opens_last_saved(tmp_path: Path) -> None:
     manager = BoardManager()
     png = tmp_path / "adc_X.png"
     png.write_bytes(b"png")
@@ -306,7 +307,7 @@ def test_reveal_graph_png_opens_last_saved(tmp_path) -> None:
     popen.assert_called_once_with(["/usr/bin/dolphin", "--select", str(png)])
 
 
-def test_reveal_graph_png_falls_back_to_capture_dir(tmp_path) -> None:
+def test_reveal_graph_png_falls_back_to_capture_dir(tmp_path: Path) -> None:
     manager = BoardManager()
     manager._last_png_path = None
     with (
