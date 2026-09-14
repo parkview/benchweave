@@ -72,6 +72,11 @@ class _Recorder:
     def close(self) -> None:
         self._file.close()
 
+    def resume(self) -> None:
+        """Shift the origin so elapsed time excludes the paused gap."""
+        if self._last_elapsed is not None:
+            self._t0 = time.monotonic() - self._last_elapsed
+
 
 def _open_file_manager(path: str) -> None:
     """Open the user's file manager at ``path``, selecting it where supported."""
@@ -104,6 +109,8 @@ class BoardManager:
         self._channel_mask = CHANNEL_MASK_ALL
         self._config = load_config()
         self._streaming = False
+        self._paused = False
+        self._counter = 0
         self._recording = False
         self._recorder: _Recorder | None = None
         self._record_path: str | None = None
@@ -168,6 +175,7 @@ class BoardManager:
             "averaging": self._averaging,
             "channel_mask": self._channel_mask,
             "streaming": self._streaming,
+            "paused": self._paused,
             "recording": self._recording,
             "record_path": self._record_path,
             "max_sps": round(estimate_max_sps(self._averaging, self._channel_mask.bit_count()), 1),
@@ -265,6 +273,8 @@ class BoardManager:
             if not self._streaming:
                 self._driver.start_stream()
                 self._streaming = True
+                self._paused = False
+                self._counter = 0
                 if record:
                     path = capture_dir() / adc_capture_filename(self._serial)
                     names, metadata = self._record_meta(note)
@@ -284,18 +294,54 @@ class BoardManager:
             self._stop_stream_locked()
         return self.status()
 
+    def pause_stream(self) -> dict[str, object]:
+        """Halt data collection, keeping the CSV file (if any) open."""
+        with self._lock:
+            self._require_connected()
+            if not self._streaming or self._paused:
+                return self.status()
+            self._paused = True
+            with suppress(Exception):
+                self._driver.stop_stream()
+            self._join_worker()
+        return self.status()
+
+    def resume_stream(self) -> dict[str, object]:
+        """Resume collection after a pause, reusing the open CSV file."""
+        with self._lock:
+            self._require_connected()
+            if not self._streaming or not self._paused:
+                return self.status()
+            self._paused = False
+            with suppress(Exception):
+                self._driver.start_stream()
+            if self._recorder is not None:
+                self._recorder.resume()
+            self._worker = threading.Thread(
+                target=self._stream_worker, name="adc-stream", daemon=True
+            )
+            self._worker.start()
+        return self.status()
+
+    def _join_worker(self) -> None:
+        worker = self._worker
+        if worker is not None:
+            worker.join(timeout=2.0)
+            self._worker = None
+
     def _stop_stream_locked(self) -> None:
         if not self._streaming:
             return
         with suppress(Exception):
             self._driver.stop_stream()
         self._streaming = False
-        worker = self._worker
-        if worker is not None:
-            worker.join(timeout=2.0)
-            self._worker = None
+        self._paused = False
+        self._join_worker()
         self._recording = False
-        self._recorder = None
+        if self._recorder is not None:
+            with suppress(Exception):
+                self._recorder.close()
+            self._recorder = None
 
     # -- live stream fan-out -------------------------------------------------
 
@@ -311,7 +357,6 @@ class BoardManager:
         loop = self._loop
         recorder = self._recorder
         interval = self._record_interval()  # seconds between samples; 0 = every sample
-        counter = 0
         last = 0.0
         try:
             for sample in self._driver.iter_samples():
@@ -321,8 +366,9 @@ class BoardManager:
                 last = now
                 # Count recorded samples (post-decimation) so the graph and CSV row
                 # order match, instead of the firmware's board-lifetime sample count.
-                sample = replace(sample, counter=counter)
-                counter += 1
+                # The counter lives on the manager so it survives a pause/resume.
+                sample = replace(sample, counter=self._counter)
+                self._counter += 1
                 if recorder is not None:
                     channels = self.convert_sample(sample)
                     recorder.write(
@@ -332,10 +378,6 @@ class BoardManager:
                     loop.call_soon_threadsafe(self._publish, sample)
         except Exception:
             pass
-        finally:
-            if recorder is not None:
-                with suppress(Exception):
-                    recorder.close()
 
     def _publish(self, sample: Sample) -> None:
         for queue in self._subscribers:

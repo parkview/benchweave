@@ -124,6 +124,22 @@ def stream_stop() -> dict[str, object]:
     return manager.stop_stream()
 
 
+@app.post("/api/stream/pause")
+def stream_pause() -> dict[str, object]:
+    try:
+        return manager.pause_stream()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/stream/resume")
+def stream_resume() -> dict[str, object]:
+    try:
+        return manager.resume_stream()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.post("/api/graph/export")
 def graph_export(body: GraphExportBody) -> dict[str, object]:
     image = body.image

@@ -93,7 +93,11 @@ driver.close()
 ```
 
 Discover/connect, configure averaging + channels, start/stop streaming, and a
-live 6-channel graph (SSE). Optionally records to
+live 6-channel graph (SSE). While streaming, **Pause** halts data collection
+(the live graph freezes) but keeps the CSV open; **Resume** continues collection
+into the same file, with `elapsed_s` and SPS continuous across the pause gap.
+**Stop** ends the session and closes the CSV (from either a running or paused
+state). Optionally records to
 `plugins/adc_6ch_12bit/captures/adc_<serial>_<timestamp>.csv`.
 
 ### CSV capture

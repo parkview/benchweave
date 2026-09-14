@@ -265,6 +265,9 @@ async function refreshStatus() {
   document.querySelectorAll("#channels input").forEach((cb) => (cb.disabled = s.streaming));
   setChannelMask(s.channel_mask);
   document.getElementById("stream-toggle").textContent = s.streaming ? "Stop" : "Start";
+  const pause = document.getElementById("pause-toggle");
+  pause.hidden = !s.streaming;
+  pause.textContent = s.paused ? "Resume" : "Pause";
   setStatus(s.connected ? `connected: ${s.device} (fw ${s.firmware})` : "disconnected");
   return s;
 }
@@ -346,6 +349,20 @@ async function onStreamToggle() {
     await refreshStatus();
   } catch (e) {
     setStatus("stream error: " + e.message);
+  }
+}
+
+async function onPauseToggle() {
+  try {
+    const s = await refreshStatus();
+    if (s.paused) {
+      await api("/api/stream/resume", { method: "POST" });
+    } else {
+      await api("/api/stream/pause", { method: "POST" });
+    }
+    await refreshStatus();
+  } catch (e) {
+    setStatus("pause error: " + e.message);
   }
 }
 
@@ -589,6 +606,7 @@ window.addEventListener("DOMContentLoaded", () => {
   document.getElementById("connect-btn").addEventListener("click", connect);
   document.getElementById("averaging").addEventListener("change", onAveragingChange);
   document.getElementById("stream-toggle").addEventListener("click", onStreamToggle);
+  document.getElementById("pause-toggle").addEventListener("click", onPauseToggle);
   document.querySelectorAll('input[name="graph-mode"]').forEach((r) =>
     r.addEventListener("change", syncGraphMode)
   );

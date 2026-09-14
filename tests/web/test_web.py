@@ -195,6 +195,78 @@ def test_stream_worker_decimates_to_sample_rate() -> None:
     assert written == [0, 1, 2]
 
 
+class _SpyRecorder:
+    def __init__(self) -> None:
+        self.closed = False
+        self.resumed = False
+        self.writes = 0
+
+    def write(self, counter: int, averaged_n: int, values: list[object]) -> None:
+        self.writes += 1
+
+    def close(self) -> None:
+        self.closed = True
+
+    def resume(self) -> None:
+        self.resumed = True
+
+
+def test_pause_stops_driver_and_keeps_recorder_open() -> None:
+    with mock.patch("benchweave.web.board.AdcDriver", _FakeDriver):
+        manager = BoardManager()
+        manager.connect("/dev/ttyACM2")
+        manager._driver.start_stream()
+        manager._streaming = True
+        manager._recording = True
+        recorder = _SpyRecorder()
+        manager._recorder = recorder  # type: ignore[assignment]
+        manager._worker = None
+
+        status = manager.pause_stream()
+
+        assert status["paused"] is True
+        assert status["streaming"] is True
+        assert manager._driver.streaming is False  # type: ignore[attr-defined]
+        assert recorder.closed is False
+
+
+def test_resume_restarts_driver_and_recorder() -> None:
+    with mock.patch("benchweave.web.board.AdcDriver", _FakeDriver):
+        manager = BoardManager()
+        manager.connect("/dev/ttyACM2")
+        manager._streaming = True
+        manager._paused = True
+        manager._counter = 42
+        recorder = _SpyRecorder()
+        manager._recorder = recorder  # type: ignore[assignment]
+        manager._worker = None
+
+        with mock.patch.object(manager, "_stream_worker", return_value=None):
+            status = manager.resume_stream()
+
+        assert status["paused"] is False
+        assert manager._driver.streaming is True  # type: ignore[attr-defined]
+        assert recorder.resumed is True
+        assert manager._counter == 42  # counter survives a resume
+
+
+def test_stop_after_pause_closes_recorder() -> None:
+    with mock.patch("benchweave.web.board.AdcDriver", _FakeDriver):
+        manager = BoardManager()
+        manager.connect("/dev/ttyACM2")
+        manager._streaming = True
+        manager._paused = True
+        recorder = _SpyRecorder()
+        manager._recorder = recorder  # type: ignore[assignment]
+        manager._worker = None
+
+        status = manager.stop_stream()
+
+        assert status["streaming"] is False
+        assert status["paused"] is False
+        assert recorder.closed is True
+
+
 def test_save_graph_png_names_after_csv(tmp_path) -> None:
     manager = BoardManager()
     manager._record_path = "/captures/adc_ABC_20260913_120000.csv"
