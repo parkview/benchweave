@@ -20,6 +20,10 @@ This repository is currently a Python project skeleton plus the frozen architect
 - [Acceptance closure](acceptance/end-to-end-review.md)
 
 
+## Web UI
+
+- [Analyse page](analyse-page.md) — browse, re-plot, group and retain captured ADC data.
+
 ## Development
 
 Use the [AI device reviewer](ai-device-reviewer.md) to assess candidate integrations against the contracts and their evidence.

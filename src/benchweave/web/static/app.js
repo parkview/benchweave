@@ -785,7 +785,7 @@ function renderCsvList() {
     const name = document.createElement("span");
     name.className = "fname";
     name.textContent = r.name;
-    name.title = "click to plot";
+    name.title = "Click to plot all channels";
     name.addEventListener("click", () => loadCapture(r.stem));
     li.appendChild(name);
 
@@ -796,7 +796,7 @@ function renderCsvList() {
 
     const sel = document.createElement("select");
     sel.className = "proj";
-    sel.title = "assign to project";
+    sel.title = "Assign this capture to a project";
     const none = document.createElement("option");
     none.value = "";
     none.textContent = "(none)";
@@ -832,6 +832,7 @@ function renderPngList() {
     a.textContent = r.name;
     a.href = `/api/captures/${r.stem}/file?ext=png`;
     a.target = "_blank";
+    a.title = "Open the chart image in a new tab";
     li.appendChild(a);
     const meta = document.createElement("span");
     meta.className = "fmeta";
@@ -875,6 +876,7 @@ function renderRetention() {
     cb.type = "checkbox";
     cb.checked = true;
     cb.dataset.stem = stem;
+    cb.title = "Include this capture when moving to trash";
     li.appendChild(cb);
     const label = document.createElement("span");
     label.className = "fname";

@@ -35,6 +35,7 @@
     #analyse-chart-box { height: 380px; position: relative; }
     #analyse-viewer { border-color: #ccc; }
     #analyse-integral { margin-left: 1rem; font-variant-numeric: tabular-nums; }
+    .tip { color: #666; font-size: 0.9rem; }
   </style>
 </head>
 <body>
@@ -123,17 +124,22 @@
   </div>
 
   <div id="tab-analyse" hidden>
+    <p class="tip">Click a CSV to plot it · scroll to zoom · drag to measure Ah/Wh ·
+    assign captures to projects to organise and retain them.</p>
+
     <section id="analyse-controls">
       <label>Project
-        <select id="analyse-project-select"></select>
+        <select id="analyse-project-select" title="Project whose retention days you want to set"></select>
       </label>
-      <input type="text" id="analyse-new-project" placeholder="new project name">
+      <input type="text" id="analyse-new-project" placeholder="new project name"
+             title="Create a project to group related captures">
       <label>Retention (days):
-        <input type="number" id="analyse-project-retention" min="0" step="1" placeholder="inherit">
+        <input type="number" id="analyse-project-retention" min="0" step="1" placeholder="inherit"
+               title="Days to keep a capture before it is suggested for trash; blank inherits the global setting">
       </label>
-      <button id="analyse-new-project-btn">New project</button>
-      <button id="analyse-set-retention">Set retention</button>
-      <button id="analyse-refresh">Refresh</button>
+      <button id="analyse-new-project-btn" title="Create the project with the name and retention above">New project</button>
+      <button id="analyse-set-retention" title="Apply the retention days to the selected project">Set retention</button>
+      <button id="analyse-refresh" title="Re-scan the captures folder and reload the lists">Refresh</button>
       <span id="analyse-status"></span>
     </section>
 
@@ -161,12 +167,13 @@
       <div>
         <strong id="analyse-file-name"></strong>
         <span id="analyse-file-meta"></span>
-        <button id="analyse-apply-config">Apply config to board</button>
-        <label>Voltage channel:
+        <button id="analyse-apply-config"
+                title="Send this capture's profile and settings to the connected ADC board">Apply config to board</button>
+        <label title="Series used for the Wh energy integral">Voltage channel:
           <select id="analyse-v-select"></select>
         </label>
-        <button id="analyse-reset-zoom">Reset zoom</button>
-        <span id="analyse-hint">Drag to select a region · scroll to zoom</span>
+        <button id="analyse-reset-zoom" title="Clear the zoom window and region selection">Reset zoom</button>
+        <span class="tip">Drag to select a region · scroll to zoom</span>
         <span id="analyse-integral"></span>
       </div>
       <div id="analyse-chart-box"><canvas id="analyse-chart"></canvas></div>
@@ -177,10 +184,11 @@
       <p>These captures have reached their retention date. Review, then move to
       trash — files stay recoverable from the OS trash for a while.</p>
       <ul id="analyse-expired-list" class="file-list"></ul>
-      <button id="analyse-trash-selected">Move selected to trash</button>
+      <button id="analyse-trash-selected"
+              title="Move the checked captures to the OS trash (recoverable)">Move selected to trash</button>
     </section>
   </div>
 
-  <script src="/app.js?v=11"></script>
+  <script src="/app.js?v=12"></script>
 </body>
 </html>
