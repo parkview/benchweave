@@ -24,6 +24,9 @@ server (`src/benchweave/mcp_server.py`). Lets Claude Code capture a photo and
 analyse it — e.g. confirm a connected ADC board is switched on, or whether its
 LED is blinking.
 
+- **Hardware:** EMeet C960 4K UHD autofocus webcam (dual mic) — purchased
+  2026-09-14, arrives later that week; CLI-controllable. Expect a UVC device at
+  `/dev/video*` (control via `v4l2-ctl`, capture via `ffmpeg`/`fswebcam`).
 - Thin `@mcp.tool()` surface over a webcam driver, own `benchweave-*` entry point
   in `pyproject.toml`.
 - Return a single downscaled JPEG (not a raw frame) to stay well under the stdio
