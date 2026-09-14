@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 from benchweave.web.board import BoardManager
 from benchweave.web.library import CaptureLibrary
+from benchweave.web.report import build_report
 from plugins.adc_6ch_12bit.protocol import AVERAGING_CHOICES, CHANNEL_MASK_ALL
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -77,6 +78,11 @@ class TrashBody(BaseModel):
 
 class AnnotationsBody(BaseModel):
     markers: list[dict[str, Any]]
+
+
+class ReportBody(BaseModel):
+    lo: float | None = None
+    hi: float | None = None
 
 
 @app.get("/api/boards")
@@ -264,6 +270,22 @@ def set_annotations(stem: str, body: AnnotationsBody) -> dict[str, object]:
     if library.file_for(stem, "csv") is None:
         raise HTTPException(status_code=404, detail=f"no CSV for '{stem}'")
     return {"markers": library.set_annotations(stem, body.markers)}
+
+
+@app.post("/api/captures/{stem}/report")
+def generate_report(stem: str, body: ReportBody) -> dict[str, object]:
+    csv = library.file_for(stem, "csv")
+    if csv is None:
+        raise HTTPException(status_code=404, detail=f"no CSV for '{stem}'")
+    data = library.parse_csv(csv)
+    markers = library.get_annotations(stem)
+    lo, hi = body.lo, body.hi
+    if lo is not None and hi is not None and lo > hi:
+        lo, hi = hi, lo
+    html = build_report(data, markers, lo, hi)
+    out = csv.with_suffix(".html")
+    out.write_text(html)
+    return {"stem": stem, "name": out.name, "path": str(out)}
 
 
 @app.post("/api/captures/{stem}/project")

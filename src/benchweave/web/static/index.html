@@ -44,6 +44,21 @@
     #analyse-region-stats td { font-variant-numeric: tabular-nums; }
     #analyse-edge { margin-top: 0.75rem; }
     #analyse-edge-readout { margin-left: 1rem; font-variant-numeric: tabular-nums; }
+    #analyse-annotate { margin-top: 0.75rem; }
+    #analyse-palette { display: inline-flex; flex-wrap: wrap; gap: 0.2rem; }
+    .palette-chip {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 1.6rem; height: 1.6rem; border: 1px solid #bbb; border-radius: 4px;
+      background: #f5f5f5; cursor: grab; font-size: 0.8rem; font-weight: 600;
+      user-select: none;
+    }
+    .palette-chip.used { background: #4363d8; color: #fff; border-color: #4363d8; }
+    #analyse-notes {
+      display: block; width: 100%; max-width: 40rem; margin-top: 0.4rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.9rem; box-sizing: border-box;
+    }
+    #analyse-annotate-status { margin-left: 0.5rem; color: #555; }
     .tip { color: #666; font-size: 0.9rem; }
   </style>
 </head>
@@ -167,7 +182,7 @@
         <ul id="analyse-csv-list" class="file-list"></ul>
       </section>
       <section id="analyse-png-frame">
-        <h3>PNG files</h3>
+        <h3>Charts &amp; reports</h3>
         <ul id="analyse-png-list" class="file-list"></ul>
       </section>
     </div>
@@ -186,6 +201,25 @@
         <span id="analyse-integral"></span>
       </div>
       <div id="analyse-chart-box"><canvas id="analyse-chart"></canvas></div>
+      <div id="analyse-annotate">
+        <div>
+          <span class="tip">Drag a letter onto the chart to mark a point in time · drag a marker to move it · click to select, then Delete to remove</span>
+          <span id="analyse-palette"></span>
+        </div>
+        <div>
+          <button id="analyse-remove-marker" title="Remove the selected marker" hidden>Remove selected</button>
+          <button id="analyse-clear-markers" title="Remove all markers">Clear all</button>
+        </div>
+        <label>Notes
+          <textarea id="analyse-notes" rows="6"
+            placeholder="Placed letters appear here automatically — add your notes after each colon."></textarea>
+        </label>
+        <div>
+          <button id="analyse-save-annotations" title="Save the markers and notes for this capture">Save markers</button>
+          <button id="analyse-report" title="Generate an HTML report with the graph, markers, notes, and the selected region">Generate report</button>
+          <span id="analyse-annotate-status"></span>
+        </div>
+      </div>
       <div id="analyse-region-stats" hidden>
         <span class="tip" id="analyse-region-summary"></span>
         <table>
@@ -215,6 +249,6 @@
     </section>
   </div>
 
-  <script src="/app.js?v=15"></script>
+  <script src="/app.js?v=16"></script>
 </body>
 </html>

@@ -22,6 +22,9 @@ let analyseZoom = { min: null, max: null }; // current x-axis zoom window (elaps
 let brushStart = null;
 let brushEnd = null;
 let brushDragging = false;
+let analyseMarkers = []; // [{label, t, note}] sorted by label
+let selectedMarker = null; // label of the selected marker
+let draggingMarker = null; // label being dragged
 
 const brushPlugin = {
   id: "brush",
@@ -38,6 +41,46 @@ const brushPlugin = {
     ctx.setLineDash([4, 3]);
     ctx.strokeRect(x1, chart.chartArea.top, x2 - x1, chart.chartArea.bottom - chart.chartArea.top);
     ctx.restore();
+  },
+};
+
+const markerPlugin = {
+  id: "markers",
+  afterDraw(chart) {
+    if (!analyseMarkers.length || !analyseChart) return;
+    const x = chart.scales.x;
+    const top = chart.chartArea.top;
+    const bottom = chart.chartArea.bottom;
+    const ctx = chart.ctx;
+    for (const m of analyseMarkers) {
+      const px = x.getPixelForValue(m.t);
+      if (px < chart.chartArea.left || px > chart.chartArea.right) continue;
+      ctx.save();
+      ctx.strokeStyle = "rgba(0, 0, 0, 0.35)";
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.moveTo(px, top);
+      ctx.lineTo(px, bottom);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      const r = 9;
+      const cx = px;
+      const cy = top + r + 2;
+      const selected = m.label === selectedMarker;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fillStyle = selected ? "#e6194b" : "#333333";
+      ctx.fill();
+      ctx.lineWidth = selected ? 2 : 1;
+      ctx.strokeStyle = "#ffffff";
+      ctx.stroke();
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "bold 11px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(m.label, cx, cy + 0.5);
+      ctx.restore();
+    }
   },
 };
 
@@ -75,7 +118,7 @@ function initAnalyseChart() {
   analyseChart = new Chart(el, {
     type: "line",
     data: { datasets: [] },
-    plugins: [brushPlugin],
+    plugins: [brushPlugin, markerPlugin],
     options: {
       animation: false,
       maintainAspectRatio: false,
@@ -127,24 +170,62 @@ function attachAnalyseChartEvents(el) {
     { passive: false }
   );
 
-  // Drag → brush a region and compute its integral.
+  // Drop a palette letter onto the chart to mark a point in time.
+  el.addEventListener("dragover", (ev) => {
+    ev.preventDefault();
+    ev.dataTransfer.dropEffect = "move";
+  });
+  el.addEventListener("drop", (ev) => {
+    ev.preventDefault();
+    const label = ev.dataTransfer.getData("text/plain");
+    if (!/^[A-Z]$/.test(label) || !analyseChart || !analyseData) return;
+    placeMarker(label, analyseChart.scales.x.getValueForPixel(ev.offsetX));
+  });
+
+  // Drag → move a marker if one is hit, otherwise brush a region.
   el.addEventListener("mousedown", (ev) => {
     if (!analyseChart || !analyseData) return;
+    const hit = markerAtPixel(ev.offsetX);
+    if (hit) {
+      draggingMarker = hit;
+      selectedMarker = hit;
+      updateRemoveButton();
+      analyseChart.update("none");
+      return;
+    }
     brushDragging = true;
     brushStart = analyseChart.scales.x.getValueForPixel(ev.offsetX);
     brushEnd = brushStart;
+    selectedMarker = null;
+    updateRemoveButton();
     analyseChart.update("none");
   });
   window.addEventListener("mousemove", (ev) => {
-    if (!brushDragging || !analyseChart) return;
+    if (!analyseChart) return;
     const rect = analyseChart.canvas.getBoundingClientRect();
     const px = ev.clientX - rect.left;
+    if (draggingMarker) {
+      if (px >= analyseChart.chartArea.left && px <= analyseChart.chartArea.right) {
+        const m = analyseMarkers.find((mm) => mm.label === draggingMarker);
+        if (m) {
+          m.t = analyseChart.scales.x.getValueForPixel(px);
+          analyseChart.update("none");
+        }
+      }
+      return;
+    }
+    if (!brushDragging) return;
     if (px < analyseChart.chartArea.left || px > analyseChart.chartArea.right) return;
     brushEnd = analyseChart.scales.x.getValueForPixel(px);
     updateIntegralReadout();
     analyseChart.update("none");
   });
   window.addEventListener("mouseup", () => {
+    if (draggingMarker) {
+      draggingMarker = null;
+      syncNotesArea();
+      return;
+    }
     if (!brushDragging) return;
     brushDragging = false;
     updateIntegralReadout();
@@ -831,21 +912,21 @@ function renderCsvList() {
 function renderPngList() {
   const ul = document.getElementById("analyse-png-list");
   ul.innerHTML = "";
-  const pngs = analyseRecords.filter((r) => r.kind === "png");
-  if (pngs.length === 0) {
+  const files = analyseRecords.filter((r) => r.kind === "png" || r.kind === "html");
+  if (files.length === 0) {
     const li = document.createElement("li");
-    li.textContent = "(no PNG charts)";
+    li.textContent = "(no charts or reports)";
     ul.appendChild(li);
     return;
   }
-  pngs.forEach((r) => {
+  files.forEach((r) => {
     const li = document.createElement("li");
     const a = document.createElement("a");
     a.className = "fname";
     a.textContent = r.name;
-    a.href = `/api/captures/${r.stem}/file?ext=png`;
+    a.href = `/api/captures/${r.stem}/file?ext=${r.kind}`;
     a.target = "_blank";
-    a.title = "Open the chart image in a new tab";
+    a.title = "Open in a new tab";
     li.appendChild(a);
     const meta = document.createElement("span");
     meta.className = "fmeta";
@@ -928,6 +1009,7 @@ async function loadCapture(stem) {
     clearEdgeAnalysis();
     renderVoltageSelect();
     renderEdgeSelect();
+    await loadAnnotations();
     renderAnalyseChart();
   } catch (e) {
     document.getElementById("analyse-status").textContent = "plot error: " + e.message;
@@ -975,6 +1057,140 @@ function renderAnalyseChart() {
 
 function currentSeriesIndex() {
   return analyseData.series.findIndex((s) => (s.unit || "").toUpperCase() === "A");
+}
+
+// -- A-Z annotation markers ------------------------------------------------
+
+function markerAtPixel(px) {
+  if (!analyseChart) return null;
+  const x = analyseChart.scales.x;
+  for (const m of analyseMarkers) {
+    if (Math.abs(x.getPixelForValue(m.t) - px) <= 10) return m.label;
+  }
+  return null;
+}
+
+function renderPalette() {
+  const box = document.getElementById("analyse-palette");
+  box.innerHTML = "";
+  const used = new Set(analyseMarkers.map((m) => m.label));
+  for (let i = 0; i < 26; i++) {
+    const letter = String.fromCharCode(65 + i);
+    const chip = document.createElement("span");
+    chip.className = "palette-chip" + (used.has(letter) ? " used" : "");
+    chip.textContent = letter;
+    chip.draggable = true;
+    chip.addEventListener("dragstart", (ev) => {
+      ev.dataTransfer.setData("text/plain", letter);
+      ev.dataTransfer.effectAllowed = "move";
+    });
+    box.appendChild(chip);
+  }
+}
+
+function syncNotesArea() {
+  document.getElementById("analyse-notes").value = analyseMarkers
+    .map((m) => `${m.label}: ${m.note}`)
+    .join("\n");
+}
+
+function parseNotesArea() {
+  const ta = document.getElementById("analyse-notes");
+  const byLabel = {};
+  for (const line of ta.value.split("\n")) {
+    const idx = line.indexOf(":");
+    if (idx < 0) continue;
+    const label = line.slice(0, idx).trim().toUpperCase();
+    if (!/^[A-Z]$/.test(label)) continue;
+    byLabel[label] = line.slice(idx + 1).trim();
+  }
+  for (const m of analyseMarkers) {
+    if (byLabel[m.label] !== undefined) m.note = byLabel[m.label];
+  }
+}
+
+function placeMarker(label, t) {
+  const existing = analyseMarkers.find((m) => m.label === label);
+  if (existing) existing.t = t;
+  else analyseMarkers.push({ label, t, note: "" });
+  analyseMarkers.sort((a, b) => (a.label < b.label ? -1 : 1));
+  selectedMarker = label;
+  renderPalette();
+  syncNotesArea();
+  updateRemoveButton();
+  analyseChart.update("none");
+}
+
+function removeMarker(label) {
+  analyseMarkers = analyseMarkers.filter((m) => m.label !== label);
+  if (selectedMarker === label) selectedMarker = null;
+  renderPalette();
+  syncNotesArea();
+  updateRemoveButton();
+  analyseChart.update("none");
+}
+
+function updateRemoveButton() {
+  document.getElementById("analyse-remove-marker").hidden = selectedMarker == null;
+}
+
+async function loadAnnotations() {
+  try {
+    const res = await api(`/api/captures/${analyseCurrentStem}/annotations`);
+    analyseMarkers = res.markers || [];
+  } catch (e) {
+    analyseMarkers = [];
+  }
+  selectedMarker = null;
+  renderPalette();
+  syncNotesArea();
+  updateRemoveButton();
+}
+
+async function saveAnnotations() {
+  if (!analyseCurrentStem) return;
+  parseNotesArea();
+  try {
+    const res = await api(`/api/captures/${analyseCurrentStem}/annotations`, {
+      method: "PUT",
+      body: JSON.stringify({ markers: analyseMarkers }),
+    });
+    analyseMarkers = res.markers || analyseMarkers;
+    renderPalette();
+    syncNotesArea();
+    updateRemoveButton();
+    document.getElementById("analyse-annotate-status").textContent = "saved";
+  } catch (e) {
+    document.getElementById("analyse-annotate-status").textContent =
+      "save error: " + e.message;
+  }
+}
+
+async function generateReport() {
+  if (!analyseCurrentStem) return;
+  parseNotesArea();
+  try {
+    await api(`/api/captures/${analyseCurrentStem}/annotations`, {
+      method: "PUT",
+      body: JSON.stringify({ markers: analyseMarkers }),
+    });
+  } catch (e) {
+    // continue with whatever is already saved
+  }
+  const lo = brushStart === null ? null : Math.min(brushStart, brushEnd);
+  const hi = brushStart === null ? null : Math.max(brushStart, brushEnd);
+  try {
+    const res = await api(`/api/captures/${analyseCurrentStem}/report`, {
+      method: "POST",
+      body: JSON.stringify({ lo, hi }),
+    });
+    document.getElementById("analyse-annotate-status").textContent =
+      "report generated: " + res.name;
+    await loadAnalyseCaptures();
+  } catch (e) {
+    document.getElementById("analyse-annotate-status").textContent =
+      "report error: " + e.message;
+  }
 }
 
 function powerPoints(V, I) {
@@ -1389,6 +1605,29 @@ window.addEventListener("DOMContentLoaded", () => {
   document.getElementById("analyse-v-select").addEventListener("change", onVoltageChange);
   document.getElementById("analyse-edge-select").addEventListener("change", updateIntegralReadout);
   document.getElementById("analyse-settle-pct").addEventListener("input", updateIntegralReadout);
+
+  document.getElementById("analyse-remove-marker").addEventListener("click", () => {
+    if (selectedMarker) removeMarker(selectedMarker);
+  });
+  document.getElementById("analyse-clear-markers").addEventListener("click", () => {
+    analyseMarkers = [];
+    selectedMarker = null;
+    renderPalette();
+    syncNotesArea();
+    updateRemoveButton();
+    if (analyseChart) analyseChart.update("none");
+  });
+  document.getElementById("analyse-save-annotations").addEventListener("click", saveAnnotations);
+  document.getElementById("analyse-report").addEventListener("click", generateReport);
+  document.getElementById("analyse-notes").addEventListener("input", parseNotesArea);
+  window.addEventListener("keydown", (ev) => {
+    const tag = (document.activeElement && document.activeElement.tagName) || "";
+    if (tag === "TEXTAREA" || tag === "INPUT" || tag === "SELECT") return;
+    if ((ev.key === "Delete" || ev.key === "Backspace") && selectedMarker) {
+      ev.preventDefault();
+      removeMarker(selectedMarker);
+    }
+  });
 
   discover();
 });
