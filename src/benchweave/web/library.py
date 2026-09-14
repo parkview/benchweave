@@ -11,6 +11,7 @@ from __future__ import annotations
 import contextlib
 import csv
 import json
+import math
 import re
 import shutil
 import sqlite3
@@ -64,6 +65,11 @@ class CaptureLibrary:
                     "stem TEXT PRIMARY KEY, "
                     "project TEXT REFERENCES projects(name) ON DELETE SET NULL, "
                     "assigned_at TEXT)"
+                )
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS annotations ("
+                    "stem TEXT PRIMARY KEY REFERENCES captures(stem) ON DELETE CASCADE, "
+                    "markers TEXT NOT NULL)"
                 )
         finally:
             conn.close()
@@ -174,6 +180,68 @@ class CaptureLibrary:
         finally:
             conn.close()
         return {"stem": stem, "project": project}
+
+    # -- annotations ---------------------------------------------------------
+
+    def get_annotations(self, stem: str) -> list[dict[str, object]]:
+        """Return the letter markers saved for a capture (empty if none)."""
+        conn = self._connect()
+        try:
+            with self._lock, conn:
+                row = conn.execute(
+                    "SELECT markers FROM annotations WHERE stem = ?", (stem,)
+                ).fetchone()
+        finally:
+            conn.close()
+        if row is None:
+            return []
+        try:
+            markers = json.loads(row["markers"])
+        except (json.JSONDecodeError, TypeError):
+            return []
+        return cast(list[dict[str, object]], markers)
+
+    def set_annotations(
+        self, stem: str, markers: list[dict[str, object]]
+    ) -> list[dict[str, object]]:
+        """Replace the capture's markers with the given (validated) list."""
+        cleaned = self._clean_markers(markers)
+        conn = self._connect()
+        try:
+            with self._lock, conn:
+                conn.execute(
+                    "INSERT OR IGNORE INTO captures (stem, project) VALUES (?, NULL)", (stem,)
+                )
+                conn.execute(
+                    "INSERT INTO annotations (stem, markers) VALUES (?, ?) "
+                    "ON CONFLICT(stem) DO UPDATE SET markers = excluded.markers",
+                    (stem, json.dumps(cleaned)),
+                )
+        finally:
+            conn.close()
+        return cleaned
+
+    @staticmethod
+    def _clean_markers(
+        markers: list[dict[str, object]],
+    ) -> list[dict[str, object]]:
+        """Keep valid, unique single-letter markers; sort them by label."""
+        seen: set[str] = set()
+        out: list[dict[str, object]] = []
+        for m in markers:
+            label = str(m.get("label", "")).strip().upper()
+            raw_t = m.get("t")
+            if not re.fullmatch(r"[A-Z]", label) or label in seen:
+                continue
+            if not isinstance(raw_t, (int, float)) or not math.isfinite(float(raw_t)):
+                continue
+            t = float(raw_t)
+            if t < 0:
+                continue
+            seen.add(label)
+            out.append({"label": label, "t": t, "note": str(m.get("note", ""))})
+        out.sort(key=lambda m: str(m["label"]))
+        return out
 
     # -- listing / scan ------------------------------------------------------
 

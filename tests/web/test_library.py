@@ -199,3 +199,45 @@ def test_config_from_csv_reads_embedded_config(tmp_path: Path) -> None:
     assert config["active_profile"] == "bench"
     assert config["profiles"]["bench"]["channels"] == {}
     assert config["settings"]["sample_rate_hz"] == 50.0
+
+
+def test_annotations_empty_by_default(library: CaptureLibrary) -> None:
+    assert library.get_annotations(STEM) == []
+
+
+def test_annotations_roundtrip_and_sort_by_label(library: CaptureLibrary) -> None:
+    markers = [
+        {"label": "C", "t": 3.0, "note": "settled"},
+        {"label": "A", "t": 1.0, "note": "power on"},
+        {"label": "B", "t": 2.0, "note": "inrush"},
+    ]
+    stored = library.set_annotations(STEM, markers)
+    assert [m["label"] for m in stored] == ["A", "B", "C"]
+    assert library.get_annotations(STEM) == stored
+
+
+def test_annotations_clean_invalid_markers(library: CaptureLibrary) -> None:
+    stored = library.set_annotations(
+        STEM,
+        [
+            {"label": "a", "t": 1.0, "note": "lowercase dropped"},
+            {"label": "A", "t": 1.0, "note": "kept"},
+            {"label": "A", "t": 9.0, "note": "duplicate dropped"},
+            {"label": "1", "t": 2.0, "note": "non-letter dropped"},
+            {"label": "B", "t": -1.0, "note": "negative t dropped"},
+            {"label": "C", "t": "x", "note": "non-numeric t dropped"},
+        ],
+    )
+    assert [m["label"] for m in stored] == ["A"]
+    assert stored[0]["t"] == 1.0
+
+
+def test_annotations_pruned_when_capture_deleted(library: CaptureLibrary) -> None:
+    library.set_annotations(STEM, [{"label": "A", "t": 1.0, "note": ""}])
+    assert library.get_annotations(STEM)  # saved
+
+    (library._captures_dir / f"{STEM}.csv").unlink()
+    (library._captures_dir / f"{STEM}.png").unlink()
+    library.scan()  # reconcile drops the capture row -> cascade deletes annotations
+
+    assert library.get_annotations(STEM) == []

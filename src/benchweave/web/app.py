@@ -75,6 +75,10 @@ class TrashBody(BaseModel):
     stems: list[str]
 
 
+class AnnotationsBody(BaseModel):
+    markers: list[dict[str, Any]]
+
+
 @app.get("/api/boards")
 def list_boards() -> list[dict[str, object]]:
     return manager.discover()
@@ -246,6 +250,20 @@ def capture_file(stem: str, ext: str = "csv") -> FileResponse:
     if path is None:
         raise HTTPException(status_code=404, detail=f"no {ext} for '{stem}'")
     return FileResponse(path)
+
+
+@app.get("/api/captures/{stem}/annotations")
+def get_annotations(stem: str) -> dict[str, object]:
+    if library.file_for(stem, "csv") is None:
+        raise HTTPException(status_code=404, detail=f"no CSV for '{stem}'")
+    return {"markers": library.get_annotations(stem)}
+
+
+@app.put("/api/captures/{stem}/annotations")
+def set_annotations(stem: str, body: AnnotationsBody) -> dict[str, object]:
+    if library.file_for(stem, "csv") is None:
+        raise HTTPException(status_code=404, detail=f"no CSV for '{stem}'")
+    return {"markers": library.set_annotations(stem, body.markers)}
 
 
 @app.post("/api/captures/{stem}/project")
