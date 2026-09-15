@@ -1,6 +1,7 @@
 import json
 from datetime import datetime
 from pathlib import Path
+from typing import Any, cast
 from unittest import mock
 
 import pytest
@@ -37,7 +38,7 @@ def test_scan_lists_files_and_groups_by_stem(library: CaptureLibrary) -> None:
     csv_rec = next(r for r in records if r["kind"] == "csv")
     assert csv_rec["serial"] == "1234"
     assert csv_rec["tag"] == "test"
-    assert csv_rec["size_bytes"] == Path(csv_rec["path"]).stat().st_size
+    assert csv_rec["size_bytes"] == Path(cast(str, csv_rec["path"])).stat().st_size
     assert csv_rec["expired"] is False  # retention 7 days, captured today
 
 
@@ -60,7 +61,9 @@ def test_expired_math() -> None:
 
 
 def test_parse_csv_reads_series_positionally(library: CaptureLibrary) -> None:
-    data = library.parse_csv(library.file_for(STEM, "csv"))
+    path = library.file_for(STEM, "csv")
+    assert path is not None
+    data = cast(dict[str, Any], library.parse_csv(path))
     assert data["sample_count"] == 2
     assert data["duration_s"] == 1.0
     names = [s["name"] for s in data["series"]]
@@ -80,7 +83,9 @@ def test_parse_csv_handles_duplicate_display_names(tmp_path: Path) -> None:
     (tmp_path / f"{STEM}.csv").write_text(csv)
     lib = CaptureLibrary(captures_dir=tmp_path, db_path=tmp_path / "library.db")
 
-    data = lib.parse_csv(lib.file_for(STEM, "csv"))
+    path = lib.file_for(STEM, "csv")
+    assert path is not None
+    data = cast(dict[str, Any], lib.parse_csv(path))
     # Positional parsing keeps both series despite the duplicate name.
     assert [s["name"] for s in data["series"]] == ["5V", "5V"]
     assert data["series"][0]["points"] == [[0.0, 3.3]]
@@ -91,7 +96,9 @@ def test_parse_csv_empty_file(tmp_path: Path) -> None:
     (tmp_path / f"{STEM}.csv").write_text("")
     lib = CaptureLibrary(captures_dir=tmp_path, db_path=tmp_path / "library.db")
 
-    data = lib.parse_csv(lib.file_for(STEM, "csv"))
+    path = lib.file_for(STEM, "csv")
+    assert path is not None
+    data = cast(dict[str, Any], lib.parse_csv(path))
     assert data["sample_count"] == 0
     assert data["series"] == []
 
@@ -100,7 +107,7 @@ def test_storage_stats_totals_and_groups(library: CaptureLibrary) -> None:
     library.create_project("battery", retention_days=7)
     library.assign_project(STEM, "battery")
 
-    stats = library.storage_stats()
+    stats = cast(dict[str, Any], library.storage_stats())
     assert stats["file_count"] == 2
     assert stats["total_bytes"] > 0
     assert {p["project"] for p in stats["per_project"]} == {"battery"}
@@ -108,7 +115,7 @@ def test_storage_stats_totals_and_groups(library: CaptureLibrary) -> None:
 
 
 def test_storage_stats_buckets_unassigned(library: CaptureLibrary) -> None:
-    stats = library.storage_stats()
+    stats = cast(dict[str, Any], library.storage_stats())
     assert {p["project"] for p in stats["per_project"]} == {"(unassigned)"}
 
 
@@ -123,7 +130,7 @@ def test_trash_moves_files_and_drops_rows(library: CaptureLibrary) -> None:
         mock.patch("benchweave.web.library.shutil.which", return_value="gio"),
         mock.patch("benchweave.web.library.subprocess.run") as run,
     ):
-        result = library.trash([STEM])
+        result = cast(dict[str, Any], library.trash([STEM]))
 
     assert result["errors"] == []
     assert {t["name"] for t in result["trashed"]} == {
@@ -136,7 +143,7 @@ def test_trash_moves_files_and_drops_rows(library: CaptureLibrary) -> None:
 
 def test_trash_no_tool_reports_error(library: CaptureLibrary) -> None:
     with mock.patch("benchweave.web.library.shutil.which", return_value=None):
-        result = library.trash([STEM])
+        result = cast(dict[str, Any], library.trash([STEM]))
 
     assert result["trashed"] == []
     assert all("no trash tool" in e["detail"] for e in result["errors"])
@@ -169,7 +176,7 @@ def test_assign_unknown_project_raises(library: CaptureLibrary) -> None:
 
 
 def test_config_from_csv_reconstructs_profile(library: CaptureLibrary) -> None:
-    config = library.config_from_csv(library.file_for(STEM, "csv"))
+    config = library.config_from_csv(cast(Path, library.file_for(STEM, "csv")))
     assert config is not None
     assert config["active_profile"] == "default"
     channels = config["profiles"]["default"]["channels"]
@@ -195,7 +202,8 @@ def test_config_from_csv_reads_embedded_config(tmp_path: Path) -> None:
     (tmp_path / f"{STEM}.csv").write_text(csv)
     lib = CaptureLibrary(captures_dir=tmp_path, db_path=tmp_path / "library.db")
 
-    config = lib.config_from_csv(lib.file_for(STEM, "csv"))
+    config = lib.config_from_csv(cast(Path, lib.file_for(STEM, "csv")))
+    assert config is not None
     assert config["active_profile"] == "bench"
     assert config["profiles"]["bench"]["channels"] == {}
     assert config["settings"]["sample_rate_hz"] == 50.0
@@ -248,7 +256,7 @@ def test_power_empty_by_default(library: CaptureLibrary) -> None:
 
 
 def test_power_roundtrip(library: CaptureLibrary) -> None:
-    state = {
+    state: dict[str, object] = {
         "mode": "dc-dc",
         "rails": [
             {"v": "Voltage", "i": "Current"},
@@ -260,18 +268,16 @@ def test_power_roundtrip(library: CaptureLibrary) -> None:
 
 
 def test_power_clean_invalid(library: CaptureLibrary) -> None:
-    stored = library.set_power(
-        STEM,
-        {
-            "mode": "nonsense",
-            "rails": [
-                {"v": "Voltage", "i": "Current"},
-                "not-a-dict",
-                {"v": "Voltage", "i": "Current"},
-                {"v": "Voltage", "i": "Current"},
-            ],
-        },
-    )
+    state: dict[str, object] = {
+        "mode": "nonsense",
+        "rails": [
+            {"v": "Voltage", "i": "Current"},
+            "not-a-dict",
+            {"v": "Voltage", "i": "Current"},
+            {"v": "Voltage", "i": "Current"},
+        ],
+    }
+    stored = library.set_power(STEM, state)
     assert stored["mode"] == "battery"  # invalid mode -> battery
     assert stored["rails"] == [  # non-dict dropped, list truncated to 2
         {"v": "Voltage", "i": "Current"},
@@ -336,7 +342,8 @@ def test_assertions_empty_by_default(library: CaptureLibrary) -> None:
 
 
 def test_assertions_roundtrip_and_clean(library: CaptureLibrary) -> None:
-    stored = library.set_assertions(
+    items = cast(
+        list[dict[str, object]],
         [
             {"name": "Voltage", "min": 3.0, "max": 3.6},
             {"name": "Current", "min": 0.0},
@@ -344,8 +351,9 @@ def test_assertions_roundtrip_and_clean(library: CaptureLibrary) -> None:
             {"name": "Power", "min": None, "max": None},  # no bounds dropped
             {"name": "Current", "min": 9.0},  # duplicate name dropped
             "not-a-dict",  # skipped
-        ]
+        ],
     )
+    stored = library.set_assertions(items)
     assert stored == [
         {"name": "Voltage", "min": 3.0, "max": 3.6},
         {"name": "Current", "min": 0.0, "max": None},
@@ -361,7 +369,7 @@ def test_check_assertions_pass_and_fail(library: CaptureLibrary) -> None:
             {"name": "Missing", "max": 1.0},  # no such channel -> fail
         ]
     )
-    res = library.check_assertions(STEM)
+    res = cast(dict[str, Any], library.check_assertions(STEM))
     assert res["checks"] == 3
     assert res["passed"] == 1
 

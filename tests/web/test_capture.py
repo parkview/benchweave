@@ -74,7 +74,7 @@ def test_capture_samples_returns_n_and_writes_tagged_csv(
     path = cast(str, result["path"])
     channels = cast(list[dict[str, object]], result["channels"])
     assert result["count"] == 3
-    assert result["samples_per_second"] > 0
+    assert cast(float, result["samples_per_second"]) > 0
     assert channels
     assert all("name" in c and "min" in c and "mean" in c and "max" in c for c in channels)
     assert "MCP" in Path(path).name

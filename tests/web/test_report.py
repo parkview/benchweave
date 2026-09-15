@@ -1,3 +1,5 @@
+from typing import Any
+
 from benchweave.web.report import build_report
 
 DATA = {
@@ -99,7 +101,7 @@ def test_build_report_power_shades_region() -> None:
 
 
 def test_build_report_assertions_checklist() -> None:
-    assertions = [
+    assertions: list[dict[str, Any]] = [
         {
             "name": "Voltage",
             "min": 0.5,
