@@ -46,6 +46,10 @@
     #analyse-edge-readout { margin-left: 1rem; font-variant-numeric: tabular-nums; }
     #analyse-power { margin-top: 0.75rem; }
     #analyse-power-readout { margin-left: 1rem; font-variant-numeric: tabular-nums; }
+    #analyse-power-rails { display: flex; flex-wrap: wrap; gap: 0.5rem 1.5rem; margin: 0.4rem 0; }
+    .power-rail { display: inline-flex; align-items: center; gap: 0.4rem; }
+    .power-rail-title { font-weight: 600; }
+    .power-rail select { font-size: 0.85rem; }
     #analyse-annotate { margin-top: 0.75rem; }
     #analyse-palette { display: inline-flex; flex-wrap: wrap; gap: 0.2rem; }
     .palette-chip {
@@ -241,14 +245,27 @@
       </div>
       <div id="analyse-power">
         <span class="tip">Hold <strong>p</strong> and drag to mark the span to analyse (green); click with <strong>p</strong> to clear it and analyse the whole trace.</span>
-        <label title="Nominal battery capacity, used for the runtime estimate">Capacity:
+        <label>Mode:
+          <select id="analyse-power-mode">
+            <option value="battery">Battery drain</option>
+            <option value="dc-dc">DC-DC efficiency</option>
+            <option value="sleep">Sleep / wake</option>
+            <option value="load-step">Load step (R)</option>
+          </select>
+        </label>
+        <label id="analyse-power-capacity-wrap" title="Nominal battery capacity, used for the runtime estimate">Capacity:
           <input type="number" id="analyse-power-capacity" min="0" step="any" placeholder="e.g. 2000">
           <select id="analyse-power-capacity-unit">
             <option value="mAh">mAh</option>
             <option value="Ah">Ah</option>
           </select>
         </label>
+        <label id="analyse-power-threshold-wrap" title="Sleep/active current threshold; blank = auto (midpoint of min and max)" hidden>Sleep threshold:
+          <input type="number" id="analyse-power-threshold" step="any" placeholder="auto">
+          <span>A</span>
+        </label>
         <button id="analyse-power-clear" title="Clear the power region and analyse the whole trace">Clear region</button>
+        <div id="analyse-power-rails"></div>
         <span id="analyse-power-readout"></span>
       </div>
     </section>
@@ -263,6 +280,6 @@
     </section>
   </div>
 
-  <script src="/app.js?v=17"></script>
+  <script src="/app.js?v=18"></script>
 </body>
 </html>

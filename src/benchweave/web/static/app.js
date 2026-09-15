@@ -29,6 +29,8 @@ let pKeyHeld = false; // 'p' modifier: drag selects the power-analysis region
 let powerLo = null; // power-analysis region bounds (elapsed s)
 let powerHi = null;
 let powerDragging = false;
+let powerMode = "battery"; // analysis mode: battery | dc-dc | sleep | load-step
+let railPairs = []; // [{vIdx, iIdx}, ...] — paired voltage/current series indices
 
 const brushPlugin = {
   id: "brush",
@@ -1059,7 +1061,7 @@ async function loadCapture(stem) {
     renderEdgeSelect();
     await loadAnnotations();
     renderAnalyseChart();
-    updatePowerReadout();
+    applyMode(powerMode);
   } catch (e) {
     document.getElementById("analyse-status").textContent = "plot error: " + e.message;
   }
@@ -1391,53 +1393,238 @@ function capacityAh() {
   return unit === "mAh" ? v / 1000 : v;
 }
 
-function computePowerSummary() {
-  const b = powerBounds();
-  if (!b) return null;
-  const iIdx = currentSeriesIndex();
-  if (iIdx < 0) return { bounds: b, noCurrent: true };
+function unitKind(u) {
+  const s = (u || "").trim().toLowerCase().replace(/[µμ]/g, "u");
+  if (["a", "ma", "ua", "na"].includes(s)) return "current";
+  if (["v", "mv", "uv", "kv"].includes(s)) return "voltage";
+  return "other";
+}
+
+function seriesIndices(kind) {
+  const out = [];
+  analyseData.series.forEach((s, i) => {
+    if (unitKind(s.unit) === kind) out.push(i);
+  });
+  return out;
+}
+
+function pickBy(idxs, re) {
+  for (const i of idxs) {
+    if (re.test(analyseData.series[i].name)) return i;
+  }
+  return null;
+}
+
+function railStats(vIdx, iIdx, lo, hi) {
+  if (iIdx < 0) return null;
   const I = analyseData.series[iIdx].points;
-  const iStats = regionStats(I, b.lo, b.hi);
-  if (!iStats) return { bounds: b, noCurrent: true };
-  const out = { bounds: b, ah: null, wh: null, iStats, vStats: null, pStats: null };
-  out.ah = trapezoid(I, b.lo, b.hi) / 3600;
-  const vIdx = Number(document.getElementById("analyse-v-select").value) || 0;
+  const iStats = regionStats(I, lo, hi);
+  if (!iStats) return null;
+  const out = { iStats, vStats: null, pStats: null, ah: trapezoid(I, lo, hi) / 3600, wh: null };
   if (vIdx >= 0 && vIdx < analyseData.series.length) {
     const V = analyseData.series[vIdx].points;
-    out.vStats = regionStats(V, b.lo, b.hi);
-    out.wh = trapezoid(powerPoints(V, I), b.lo, b.hi) / 3600;
-    out.pStats = powerRegionStats(V, I, b.lo, b.hi);
+    out.vStats = regionStats(V, lo, hi);
+    out.wh = trapezoid(powerPoints(V, I), lo, hi) / 3600;
+    out.pStats = powerRegionStats(V, I, lo, hi);
   }
   return out;
 }
 
+function guessRailPairs(mode) {
+  const Vs = seriesIndices("voltage");
+  const Is = seriesIndices("current");
+  const count = mode === "dc-dc" ? 2 : 1;
+  const pairs = [];
+  for (let r = 0; r < count; r++) {
+    let vIdx = -1;
+    let iIdx = -1;
+    if (mode === "dc-dc") {
+      const want = r === 0 ? /in|input|vin/i : /out|output|vout/i;
+      vIdx = pickBy(Vs, want) ?? (Vs[r] != null ? Vs[r] : -1);
+      iIdx = pickBy(Is, want) ?? (Is[r] != null ? Is[r] : -1);
+    } else {
+      vIdx = Vs[0] != null ? Vs[0] : -1;
+      iIdx = Is[0] != null ? Is[0] : -1;
+    }
+    pairs.push({ vIdx, iIdx });
+  }
+  return pairs;
+}
+
+function railSelect(kind, r, idxs) {
+  const sel = document.createElement("select");
+  sel.dataset.rail = String(r);
+  sel.dataset.kind = kind;
+  const none = document.createElement("option");
+  none.value = "-1";
+  none.textContent = "none";
+  sel.appendChild(none);
+  idxs.forEach((i) => {
+    const s = analyseData.series[i];
+    const o = document.createElement("option");
+    o.value = String(i);
+    o.textContent = `${s.name} (${s.unit || "?"})`;
+    sel.appendChild(o);
+  });
+  const pair = railPairs[r];
+  const cur = kind === "v" ? pair.vIdx : pair.iIdx;
+  sel.value = String(cur != null && cur >= 0 ? cur : -1);
+  sel.addEventListener("change", () => {
+    const val = Number(sel.value);
+    const p = railPairs[r];
+    if (kind === "v") p.vIdx = val >= 0 ? val : -1;
+    else p.iIdx = val >= 0 ? val : -1;
+    updatePowerReadout();
+  });
+  return sel;
+}
+
+function renderPowerRails() {
+  const box = document.getElementById("analyse-power-rails");
+  box.innerHTML = "";
+  const Vs = seriesIndices("voltage");
+  const Is = seriesIndices("current");
+  const labels = powerMode === "dc-dc" ? ["Input", "Output"] : ["Rail"];
+  labels.forEach((label, r) => {
+    const row = document.createElement("div");
+    row.className = "power-rail";
+    const title = document.createElement("span");
+    title.className = "power-rail-title";
+    title.textContent = label;
+    row.appendChild(title);
+    row.appendChild(railSelect("v", r, Vs));
+    row.appendChild(railSelect("i", r, Is));
+    box.appendChild(row);
+  });
+}
+
+function syncPowerControls() {
+  document.getElementById("analyse-power-capacity-wrap").hidden = powerMode !== "battery";
+  document.getElementById("analyse-power-threshold-wrap").hidden = powerMode !== "sleep";
+}
+
+function applyMode(mode) {
+  powerMode = mode;
+  railPairs = guessRailPairs(mode);
+  renderPowerRails();
+  syncPowerControls();
+  updatePowerReadout();
+}
+
+function batteryReadout(b) {
+  const r = railPairs[0];
+  if (!r || r.iIdx < 0) return "no current (A) channel to analyse";
+  const s = railStats(r.vIdx, r.iIdx, b.lo, b.hi);
+  if (!s) return "no current (A) channel to analyse";
+  const bits = [];
+  bits.push(`∫ ${formatSigned(s.ah)} Ah`);
+  if (s.wh != null) bits.push(`${formatSigned(s.wh)} Wh`);
+  bits.push(`${formatNumber(s.iStats.mean)} A avg · ${formatNumber(s.iStats.max)} A pk`);
+  if (s.vStats) bits.push(`${formatNumber(s.vStats.mean)} V avg (min ${formatNumber(s.vStats.min)})`);
+  if (s.pStats) bits.push(`${formatNumber(s.pStats.mean)} W avg · ${formatNumber(s.pStats.peak)} W pk`);
+  const cap = capacityAh();
+  if (cap != null && s.iStats.mean > 1e-9) bits.push(`~${formatNumber(cap / s.iStats.mean)} h @ ${formatNumber(cap)} Ah`);
+  return bits.join("  ·  ");
+}
+
+function dcDcReadout(b) {
+  const inS = railStats(railPairs[0] ? railPairs[0].vIdx : -1, railPairs[0] ? railPairs[0].iIdx : -1, b.lo, b.hi);
+  const outS = railStats(railPairs[1] ? railPairs[1].vIdx : -1, railPairs[1] ? railPairs[1].iIdx : -1, b.lo, b.hi);
+  if (!inS || !outS || !inS.vStats || !outS.vStats || !inS.pStats || !outS.pStats) {
+    return "need two paired V×I rails (input & output)";
+  }
+  const pin = inS.pStats.mean;
+  const pout = outS.pStats.mean;
+  const bits = [];
+  bits.push(`Vin ${formatNumber(inS.vStats.mean)} V · Iin ${formatNumber(inS.iStats.mean)} A · Pin ${formatNumber(pin)} W`);
+  bits.push(`Vout ${formatNumber(outS.vStats.mean)} V · Iout ${formatNumber(outS.iStats.mean)} A · Pout ${formatNumber(pout)} W`);
+  if (Math.abs(pin) > 1e-9) bits.push(`η ${formatNumber((pout / pin) * 100)} %`);
+  bits.push(`∫ in ${formatSigned(inS.wh)} Wh · out ${formatSigned(outS.wh)} Wh`);
+  return bits.join("  ·  ");
+}
+
+function sleepReadout(b) {
+  const r = railPairs[0];
+  if (!r || r.iIdx < 0) return "no current (A) channel to analyse";
+  const I = analyseData.series[r.iIdx].points;
+  const iStats = regionStats(I, b.lo, b.hi);
+  if (!iStats) return "no current (A) channel to analyse";
+  const raw = document.getElementById("analyse-power-threshold").value.trim();
+  let thr = raw === "" ? null : parseFloat(raw);
+  if (!Number.isFinite(thr)) thr = (iStats.min + iStats.max) / 2;
+  let activeN = 0;
+  let sleepN = 0;
+  let activeSum = 0;
+  let sleepSum = 0;
+  for (const [t, v] of I) {
+    if (v == null || t < b.lo || t > b.hi) continue;
+    if (v > thr) {
+      activeN += 1;
+      activeSum += v;
+    } else {
+      sleepN += 1;
+      sleepSum += v;
+    }
+  }
+  const total = activeN + sleepN;
+  if (total === 0) return "";
+  const duty = (activeN / total) * 100;
+  const activeAvg = activeN ? activeSum / activeN : 0;
+  const sleepAvg = sleepN ? sleepSum / sleepN : 0;
+  const bits = [];
+  bits.push(`active ${formatNumber(duty)} % · sleep ${formatNumber(100 - duty)} %`);
+  bits.push(`I active ${formatNumber(activeAvg)} A · sleep ${formatNumber(sleepAvg)} A`);
+  bits.push(`∫ ${formatSigned(trapezoid(I, b.lo, b.hi) / 3600)} Ah`);
+  return bits.join("  ·  ");
+}
+
+function loadStepStats(vIdx, iIdx, lo, hi) {
+  const V = regionPoints(analyseData.series[vIdx].points, lo, hi);
+  const I = regionPoints(analyseData.series[iIdx].points, lo, hi);
+  const n = Math.min(V.length, I.length);
+  if (n < 3) return null;
+  const head = Math.max(1, Math.floor(n * 0.15));
+  const v0 = meanLevel(V.slice(0, head));
+  const v1 = meanLevel(V.slice(V.length - head));
+  const i0 = meanLevel(I.slice(0, head));
+  const i1 = meanLevel(I.slice(I.length - head));
+  if (v0 == null || v1 == null || i0 == null || i1 == null) return null;
+  const dv = v1 - v0;
+  const di = i1 - i0;
+  const r = Math.abs(di) > 1e-9 ? -dv / di : null;
+  return { v0, v1, i0, i1, dv, di, r };
+}
+
+function loadStepReadout(b) {
+  const r = railPairs[0];
+  if (!r || r.vIdx < 0 || r.iIdx < 0) return "need a paired V×I rail";
+  const s = loadStepStats(r.vIdx, r.iIdx, b.lo, b.hi);
+  if (!s) return "no clear load step in the region";
+  const bits = [];
+  bits.push(`ΔV ${formatNumber(s.dv)} V · ΔI ${formatNumber(s.di)} A`);
+  if (s.r != null) bits.push(`R ${formatNumber(s.r)} Ω`);
+  bits.push(`V ${formatNumber(s.v0)}→${formatNumber(s.v1)} V · I ${formatNumber(s.i0)}→${formatNumber(s.i1)} A`);
+  return bits.join("  ·  ");
+}
+
+function modeReadout(b) {
+  if (powerMode === "battery") return batteryReadout(b);
+  if (powerMode === "dc-dc") return dcDcReadout(b);
+  if (powerMode === "sleep") return sleepReadout(b);
+  if (powerMode === "load-step") return loadStepReadout(b);
+  return "";
+}
+
 function updatePowerReadout() {
   const el = document.getElementById("analyse-power-readout");
-  const sum = computePowerSummary();
-  if (!sum) {
+  const b = powerBounds();
+  if (!b) {
     el.textContent = "";
     return;
   }
-  if (sum.noCurrent) {
-    el.textContent = "no current (A) channel to analyse";
-    return;
-  }
-  const b = sum.bounds;
-  const bits = [`${b.region ? "region" : "full"} ${formatNumber(b.hi - b.lo)} s`];
-  bits.push(`∫ ${formatSigned(sum.ah)} Ah`);
-  if (sum.wh != null) bits.push(`${formatSigned(sum.wh)} Wh`);
-  bits.push(`${formatNumber(sum.iStats.mean)} A avg · ${formatNumber(sum.iStats.max)} A pk`);
-  if (sum.vStats) {
-    bits.push(`${formatNumber(sum.vStats.mean)} V avg (min ${formatNumber(sum.vStats.min)})`);
-  }
-  if (sum.pStats) {
-    bits.push(`${formatNumber(sum.pStats.mean)} W avg · ${formatNumber(sum.pStats.peak)} W pk`);
-  }
-  const cap = capacityAh();
-  if (cap != null && sum.iStats.mean > 1e-9) {
-    bits.push(`~${formatNumber(cap / sum.iStats.mean)} h @ ${formatNumber(cap)} Ah`);
-  }
-  el.textContent = bits.join("  ·  ");
+  const prefix = `${b.region ? "region" : "full"} ${formatNumber(b.hi - b.lo)} s`;
+  const body = modeReadout(b);
+  el.textContent = body ? `${prefix}  ·  ${body}` : prefix;
 }
 
 function clearRegionStats() {
@@ -1615,7 +1802,6 @@ function onResetZoom() {
 
 function onVoltageChange() {
   updateIntegralReadout();
-  updatePowerReadout();
 }
 
 async function assignProject(stem, project) {
@@ -1752,6 +1938,9 @@ window.addEventListener("DOMContentLoaded", () => {
   });
   document.getElementById("analyse-power-capacity").addEventListener("input", updatePowerReadout);
   document.getElementById("analyse-power-capacity-unit").addEventListener("change", updatePowerReadout);
+  document.getElementById("analyse-power-mode").addEventListener("change", (ev) => applyMode(ev.target.value));
+  document.getElementById("analyse-power-threshold").addEventListener("input", updatePowerReadout);
+  syncPowerControls();
   window.addEventListener("keydown", (ev) => {
     const tag = (document.activeElement && document.activeElement.tagName) || "";
     const typing = tag === "TEXTAREA" || tag === "INPUT" || tag === "SELECT";

@@ -26,12 +26,12 @@ brush-region Ah/Wh readout. Roughly in value-per-effort order; pick individually
 - **Data integrity** — CSV health check (duplicate columns, elapsed-time gaps,
   non-monotonic timestamps, SPS anomalies); measured-vs-configured sample rate.
 - **Power / battery** — **partially done 2026-09-15**: `p`-key power region
-  (green shading, distinct from the blue inspect brush) + single-rail battery
-  totals (full-trace or region: Ah/Wh, avg/peak current & power, V min/avg,
-  capacity→runtime estimate).
-  **Remaining:** analysis modes (battery / DC-DC / sleep / load-step) with
-  multi-rail V↔I pairing; per-capture persistence + a global default; reuse the
-  last channel mapping when names match; mode-shaped HTML reports.
+  (green shading) + analysis modes (battery / DC-DC / sleep / load-step) with
+  auto-guessed V↔I rail pairing (editable pickers). Readouts: battery
+  Ah/Wh/avg/peak + capacity→runtime; DC-DC Vin/Iin/Pin, Vout/Iout/Pout, η and
+  in/out energy; sleep active/sleep duty + threshold; load-step ΔV/ΔI → R.
+  **Remaining:** per-capture persistence + a global default; reuse the last
+  channel mapping when names match; mode-shaped HTML reports.
 - **Reporting & automation** — ✅ **done 2026-09-15**: self-contained HTML report
   export — inline SVG chart, A–Z letter markers (drag-from-palette) with notes,
   and the brushed region's shaded selection + per-channel stats table.
