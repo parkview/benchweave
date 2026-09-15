@@ -38,8 +38,10 @@ brush-region Ah/Wh readout. Roughly in value-per-effort order; pick individually
 - **Reporting & automation** — ✅ **done 2026-09-15**: self-contained HTML report
   export — inline SVG chart, A–Z letter markers (drag-from-palette) with notes,
   and the brushed region's shaded selection + per-channel stats table.
-  **Remaining:** per-channel min/max assertion checks (mini pass/fail); an MCP
-  tool to load a capture and answer questions about it.
+  Per-channel min/max assertion checks (mini pass/fail, evaluated over the full
+  trace and matched by channel name, with a live checklist in the Analyse tab and
+  a checks section in the report) shipped 2026-09-15.
+  **Remaining:** an MCP tool to load a capture and answer questions about it.
 
 **Low priority (keep in mind for later):**
 

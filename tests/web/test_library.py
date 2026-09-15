@@ -329,3 +329,63 @@ def test_power_pruned_when_capture_deleted(library: CaptureLibrary) -> None:
     library.scan()  # reconcile drops the capture row -> cascade deletes power_analysis
 
     assert library.get_power(STEM) == {"mode": "battery", "rails": [], "source": "default"}
+
+
+def test_assertions_empty_by_default(library: CaptureLibrary) -> None:
+    assert library.get_assertions() == []
+
+
+def test_assertions_roundtrip_and_clean(library: CaptureLibrary) -> None:
+    stored = library.set_assertions(
+        [
+            {"name": "Voltage", "min": 3.0, "max": 3.6},
+            {"name": "Current", "min": 0.0},
+            {"name": "   ", "min": 1.0},  # blank name dropped
+            {"name": "Power", "min": None, "max": None},  # no bounds dropped
+            {"name": "Current", "min": 9.0},  # duplicate name dropped
+            "not-a-dict",  # skipped
+        ]
+    )
+    assert stored == [
+        {"name": "Voltage", "min": 3.0, "max": 3.6},
+        {"name": "Current", "min": 0.0, "max": None},
+    ]
+    assert library.get_assertions() == stored
+
+
+def test_check_assertions_pass_and_fail(library: CaptureLibrary) -> None:
+    library.set_assertions(
+        [
+            {"name": "Voltage", "min": 0.5, "max": 2.0},  # actual 1.0..1.1 -> pass
+            {"name": "Current", "min": 3.0},  # actual 2.0..2.2 -> fail
+            {"name": "Missing", "max": 1.0},  # no such channel -> fail
+        ]
+    )
+    res = library.check_assertions(STEM)
+    assert res["checks"] == 3
+    assert res["passed"] == 1
+
+    by_name = {r["name"]: r for r in res["results"]}
+    assert by_name["Voltage"]["pass"] is True
+    assert by_name["Voltage"]["actual_min"] == 1.0
+    assert by_name["Voltage"]["actual_max"] == 1.1
+    assert by_name["Voltage"]["unit"] == "V"
+    assert by_name["Current"]["pass"] is False
+    assert by_name["Missing"]["found"] is False
+
+
+def test_check_assertions_without_csv(library: CaptureLibrary) -> None:
+    library.set_assertions([{"name": "Voltage", "min": 0.5}])
+    res = library.check_assertions("adc_nope_20260914_120000")
+    assert res["results"] == [
+        {
+            "name": "Voltage",
+            "min": 0.5,
+            "max": None,
+            "actual_min": None,
+            "actual_max": None,
+            "unit": "",
+            "found": False,
+            "pass": False,
+        }
+    ]

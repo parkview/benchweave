@@ -9,7 +9,7 @@ import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
@@ -107,6 +107,10 @@ class PowerBody(BaseModel):
 
 class DefaultModeBody(BaseModel):
     mode: str = "battery"
+
+
+class AssertionsBody(BaseModel):
+    assertions: list[dict[str, Any]]
 
 
 @app.get("/api/boards")
@@ -315,6 +319,23 @@ def set_power_default(body: DefaultModeBody) -> dict[str, object]:
     return {"mode": library.set_default_mode(body.mode)}
 
 
+@app.get("/api/assertions")
+def get_assertions() -> dict[str, object]:
+    return {"assertions": library.get_assertions()}
+
+
+@app.put("/api/assertions")
+def set_assertions(body: AssertionsBody) -> dict[str, object]:
+    return {"assertions": library.set_assertions(body.assertions)}
+
+
+@app.get("/api/captures/{stem}/assertions")
+def capture_assertions(stem: str) -> dict[str, object]:
+    if library.file_for(stem, "csv") is None:
+        raise HTTPException(status_code=404, detail=f"no CSV for '{stem}'")
+    return library.check_assertions(stem)
+
+
 @app.post("/api/captures/{stem}/report")
 def generate_report(stem: str, body: ReportBody) -> dict[str, object]:
     csv = library.file_for(stem, "csv")
@@ -325,8 +346,12 @@ def generate_report(stem: str, body: ReportBody) -> dict[str, object]:
     lo, hi = body.lo, body.hi
     if lo is not None and hi is not None and lo > hi:
         lo, hi = hi, lo
+    assertions = cast(
+        list[dict[str, Any]], library.check_assertions(stem)["results"]
+    )
     html = build_report(
-        data, markers, lo, hi, body.power.model_dump() if body.power else None
+        data, markers, lo, hi, body.power.model_dump() if body.power else None,
+        assertions,
     )
     out = csv.with_suffix(".html")
     out.write_text(html)

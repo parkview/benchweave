@@ -383,6 +383,128 @@ class CaptureLibrary:
             conn.close()
         return cleaned
 
+    # -- assertions ----------------------------------------------------------
+
+    @staticmethod
+    def _clean_bound(v: object) -> float | None:
+        if v is None or v == "":
+            return None
+        try:
+            f = float(cast(Any, v))
+        except (TypeError, ValueError):
+            return None
+        return f if math.isfinite(f) else None
+
+    @staticmethod
+    def _clean_assertions(items: list[dict[str, object]]) -> list[dict[str, object]]:
+        out: list[dict[str, object]] = []
+        seen: set[str] = set()
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            name = str(it.get("name", "")).strip()
+            if not name or name in seen:
+                continue
+            lo = CaptureLibrary._clean_bound(it.get("min"))
+            hi = CaptureLibrary._clean_bound(it.get("max"))
+            if lo is None and hi is None:
+                continue
+            if lo is not None and hi is not None and lo > hi:
+                lo, hi = hi, lo
+            seen.add(name)
+            out.append({"name": name, "min": lo, "max": hi})
+        return out
+
+    def get_assertions(self) -> list[dict[str, object]]:
+        raw = self.get_setting("assertions")
+        if not raw:
+            return []
+        try:
+            data = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return []
+        if not isinstance(data, list):
+            return []
+        return self._clean_assertions(cast(list[dict[str, object]], data))
+
+    def set_assertions(
+        self, items: list[dict[str, object]]
+    ) -> list[dict[str, object]]:
+        cleaned = self._clean_assertions(items)
+        self.set_setting("assertions", json.dumps(cleaned))
+        return cleaned
+
+    def check_assertions(self, stem: str) -> dict[str, object]:
+        assertions = self.get_assertions()
+        csv = self.file_for(stem, "csv")
+        series: list[dict[str, Any]] = []
+        if csv is not None:
+            data = self.parse_csv(csv)
+            series = cast(list[dict[str, Any]], data.get("series") or [])
+        by_name: dict[str, dict[str, Any]] = {}
+        for item in series:
+            n = str(item.get("name", ""))
+            if n and n not in by_name:
+                by_name[n] = item
+
+        results: list[dict[str, object]] = []
+        for a in assertions:
+            name = str(a["name"])
+            lo = cast(float | None, a.get("min"))
+            hi = cast(float | None, a.get("max"))
+            s = by_name.get(name)
+            if s is None:
+                results.append(
+                    {
+                        "name": name,
+                        "min": lo,
+                        "max": hi,
+                        "actual_min": None,
+                        "actual_max": None,
+                        "unit": "",
+                        "found": False,
+                        "pass": False,
+                    }
+                )
+                continue
+            pts = cast(list[list[float | None]], s.get("points") or [])
+            vals = [v for _, v in pts if v is not None]
+            if not vals:
+                results.append(
+                    {
+                        "name": name,
+                        "min": lo,
+                        "max": hi,
+                        "actual_min": None,
+                        "actual_max": None,
+                        "unit": str(s.get("unit", "") or ""),
+                        "found": False,
+                        "pass": False,
+                    }
+                )
+                continue
+            amin = min(vals)
+            amax = max(vals)
+            ok = True
+            if lo is not None and amin < lo:
+                ok = False
+            if hi is not None and amax > hi:
+                ok = False
+            results.append(
+                {
+                    "name": name,
+                    "min": lo,
+                    "max": hi,
+                    "actual_min": amin,
+                    "actual_max": amax,
+                    "unit": str(s.get("unit", "") or ""),
+                    "found": True,
+                    "pass": ok,
+                }
+            )
+        passed = sum(1 for r in results if r["pass"])
+        return {"results": results, "passed": passed, "checks": len(results)}
+
     # -- listing / scan ------------------------------------------------------
 
     def scan(self) -> list[dict[str, object]]:

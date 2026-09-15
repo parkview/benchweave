@@ -179,6 +179,7 @@ def build_report(
     lo: float | None,
     hi: float | None,
     power: dict[str, Any] | None = None,
+    assertions: list[dict[str, Any]] | None = None,
 ) -> str:
     """Return a complete HTML document for the capture."""
     name = str(data.get("name", "capture"))
@@ -245,6 +246,10 @@ def build_report(
     if power:
         power_block = _render_power(series, power, duration)
 
+    assertions_block = ""
+    if assertions:
+        assertions_block = _render_assertions(assertions)
+
     meta_bits = []
     if meta.get("note"):
         meta_bits.append(str(meta["note"]))
@@ -260,7 +265,8 @@ def build_report(
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
         f"<title>{_esc(name)}</title>\n<style>{_css()}</style>\n</head>\n<body>\n"
         f'<header><h1>{_esc(name)}</h1><p class="meta">{_esc(meta_line)}</p></header>\n'
-        f'<div class="chart">{svg}</div>\n{notes_block}{stats_block}{power_block}\n'
+        f'<div class="chart">{svg}</div>\n{notes_block}{stats_block}'
+        f'{power_block}{assertions_block}\n'
         "</body>\n</html>\n"
     )
 
@@ -695,6 +701,55 @@ def _render_power(series: list[Series], power: dict[str, Any], duration: float) 
     )
 
 
+def _bounds_text(r: dict[str, Any], unit: str) -> str:
+    lo = r.get("min")
+    hi = r.get("max")
+    if lo is not None and hi is not None:
+        return f" (limit {_fmt(lo)} … {_fmt(hi)}{unit})"
+    if lo is not None:
+        return f" (min {_fmt(lo)}{unit})"
+    if hi is not None:
+        return f" (max {_fmt(hi)}{unit})"
+    return ""
+
+
+def _render_assertions(results: list[dict[str, Any]]) -> str:
+    if not results:
+        return ""
+    passed = sum(1 for r in results if r.get("pass"))
+    rows = ""
+    for r in results:
+        name = str(r.get("name", ""))
+        unit = (" " + str(r.get("unit"))) if r.get("unit") else ""
+        ok = bool(r.get("pass"))
+        mark = "✓" if ok else "✗"
+        cls = "pass" if ok else "fail"
+        if not r.get("found"):
+            text = "no matching channel"
+        else:
+            amin = cast(float, r.get("actual_min"))
+            amax = cast(float, r.get("actual_max"))
+            actual = f"{_fmt(amin)} … {_fmt(amax)}{unit}"
+            if ok:
+                text = f"{actual}{_bounds_text(r, unit)}"
+            else:
+                reasons = []
+                if r.get("min") is not None and amin < r["min"]:
+                    reasons.append(f"min {_fmt(amin)}{unit} below {_fmt(r['min'])}{unit}")
+                if r.get("max") is not None and amax > r["max"]:
+                    reasons.append(f"max {_fmt(amax)}{unit} above {_fmt(r['max'])}{unit}")
+                text = f"{actual}; {'; '.join(reasons)}"
+        rows += (
+            f'<div class="check {cls}"><span class="mark">{mark}</span>'
+            f'<span class="cname">{_esc(name)}</span>'
+            f'<span class="ctext">{_esc(text)}</span></div>'
+        )
+    return (
+        f'<section class="assertions"><h2>Checks ({passed}/{len(results)} passed)</h2>'
+        f'{rows}</section>'
+    )
+
+
 def _esc(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
@@ -726,6 +781,13 @@ section { margin: 1.25rem 0; }
 .ntime { color: #888; font-size: 0.85rem; font-variant-numeric: tabular-nums; }
 .ntext { white-space: pre-wrap; }
 .summary { color: #555; font-variant-numeric: tabular-nums; }
+.assertions h2 { font-size: 1.05rem; margin: 0 0 0.5rem; }
+.check { display: flex; align-items: baseline; gap: 0.6rem; padding: 0.2rem 0; }
+.mark { font-weight: 700; width: 1.1rem; }
+.check.pass .mark { color: #2e7d32; }
+.check.fail .mark { color: #b3261e; }
+.cname { font-weight: 600; }
+.ctext { color: #555; font-variant-numeric: tabular-nums; }
 table { border-collapse: collapse; font-size: 0.9rem; }
 th, td { border: 1px solid #ddd; padding: 0.25rem 0.6rem; text-align: right; }
 th:nth-child(-n+2), td:nth-child(-n+2) { text-align: left; }
@@ -736,5 +798,6 @@ td { font-variant-numeric: tabular-nums; }
   .tick { fill: #999; }
   .axis { fill: #ccc; }
   th, td { border-color: #333; }
+  .ctext { color: #aaa; }
 }
 """

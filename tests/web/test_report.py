@@ -96,3 +96,44 @@ def test_build_report_power_shades_region() -> None:
     html = build_report(DATA, [], None, None, power)
     assert "rgba(60, 180, 75" in html  # green power-region fill
     assert "region 500.00 ms → 2.000 s" in html
+
+
+def test_build_report_assertions_checklist() -> None:
+    assertions = [
+        {
+            "name": "Voltage",
+            "min": 0.5,
+            "max": 2.0,
+            "actual_min": 1.0,
+            "actual_max": 1.1,
+            "unit": "V",
+            "found": True,
+            "pass": True,
+        },
+        {
+            "name": "Current",
+            "min": 3.0,
+            "max": None,
+            "actual_min": 2.0,
+            "actual_max": 2.2,
+            "unit": "A",
+            "found": True,
+            "pass": False,
+        },
+        {
+            "name": "Missing",
+            "min": None,
+            "max": 1.0,
+            "actual_min": None,
+            "actual_max": None,
+            "unit": "",
+            "found": False,
+            "pass": False,
+        },
+    ]
+    html = build_report(DATA, [], None, None, None, assertions)
+    assert "Checks (1/3 passed)" in html
+    assert "no matching channel" in html
+    assert 'class="check pass"' in html
+    assert 'class="check fail"' in html
+    assert "below 3.000 A" in html

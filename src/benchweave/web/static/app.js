@@ -31,6 +31,7 @@ let powerHi = null;
 let powerDragging = false;
 let powerMode = "battery"; // analysis mode: battery | dc-dc | sleep | load-step
 let railPairs = []; // [{vIdx, iIdx}, ...] — paired voltage/current series indices
+let assertionSpec = []; // [{name, min, max}] — global per-channel min/max checks
 
 const brushPlugin = {
   id: "brush",
@@ -1062,6 +1063,8 @@ async function loadCapture(stem) {
     await loadAnnotations();
     renderAnalyseChart();
     await loadPowerState();
+    renderChannelNameDatalist();
+    await renderAssertionResults();
   } catch (e) {
     document.getElementById("analyse-status").textContent = "plot error: " + e.message;
   }
@@ -1604,6 +1607,161 @@ function onModeChange(mode) {
   setDefaultMode(mode);
 }
 
+function renderChannelNameDatalist() {
+  const dl = document.getElementById("analyse-channel-names");
+  dl.innerHTML = "";
+  if (!analyseData) return;
+  const seen = new Set();
+  analyseData.series.forEach((s) => {
+    if (!s.name || seen.has(s.name)) return;
+    seen.add(s.name);
+    const o = document.createElement("option");
+    o.value = s.name;
+    dl.appendChild(o);
+  });
+}
+
+async function loadAssertionSpec() {
+  try {
+    const res = await api("/api/assertions");
+    assertionSpec = res.assertions || [];
+  } catch (e) {
+    assertionSpec = [];
+  }
+  renderAssertionRows();
+  renderAssertionResults();
+}
+
+function assertionRow(a, idx) {
+  const row = document.createElement("div");
+  row.className = "assertion-row";
+  const name = document.createElement("input");
+  name.type = "text";
+  name.placeholder = "channel name";
+  name.value = a.name || "";
+  name.setAttribute("list", "analyse-channel-names");
+  const lo = document.createElement("input");
+  lo.type = "number";
+  lo.step = "any";
+  lo.placeholder = "min";
+  lo.value = a.min == null ? "" : String(a.min);
+  const hi = document.createElement("input");
+  hi.type = "number";
+  hi.step = "any";
+  hi.placeholder = "max";
+  hi.value = a.max == null ? "" : String(a.max);
+  const del = document.createElement("button");
+  del.textContent = "✕";
+  del.title = "Remove this check";
+  del.addEventListener("click", () => {
+    assertionSpec.splice(idx, 1);
+    renderAssertionRows();
+    renderAssertionResults();
+  });
+  row.append(name, lo, hi, del);
+  return row;
+}
+
+function renderAssertionRows() {
+  const box = document.getElementById("analyse-assertion-rows");
+  box.innerHTML = "";
+  assertionSpec.forEach((a, idx) => box.appendChild(assertionRow(a, idx)));
+}
+
+function addAssertion() {
+  assertionSpec.push({ name: "", min: null, max: null });
+  renderAssertionRows();
+}
+
+function readAssertionRows() {
+  const rows = document.getElementById("analyse-assertion-rows").children;
+  const out = [];
+  for (const row of rows) {
+    const inputs = row.querySelectorAll("input");
+    const n = inputs[0].value.trim();
+    const minV = inputs[1].value.trim() === "" ? null : parseFloat(inputs[1].value);
+    const maxV = inputs[2].value.trim() === "" ? null : parseFloat(inputs[2].value);
+    if (!n) continue;
+    out.push({
+      name: n,
+      min: Number.isFinite(minV) ? minV : null,
+      max: Number.isFinite(maxV) ? maxV : null,
+    });
+  }
+  return out;
+}
+
+async function saveAssertions() {
+  const spec = readAssertionRows();
+  try {
+    const res = await api("/api/assertions", {
+      method: "PUT",
+      body: JSON.stringify({ assertions: spec }),
+    });
+    assertionSpec = res.assertions || spec;
+    renderAssertionRows();
+    document.getElementById("analyse-assertion-status").textContent = "saved";
+    renderAssertionResults();
+  } catch (e) {
+    document.getElementById("analyse-assertion-status").textContent =
+      "save error: " + e.message;
+  }
+}
+
+function checklistText(r) {
+  const unit = r.unit ? " " + r.unit : "";
+  if (!r.found) return r.name + " — no matching channel";
+  const actual = formatNumber(r.actual_min) + " … " + formatNumber(r.actual_max) + unit;
+  if (r.pass) {
+    let lim = "";
+    if (r.min != null && r.max != null) {
+      lim = " (limit " + formatNumber(r.min) + " … " + formatNumber(r.max) + unit + ")";
+    } else if (r.min != null) {
+      lim = " (min " + formatNumber(r.min) + unit + ")";
+    } else if (r.max != null) {
+      lim = " (max " + formatNumber(r.max) + unit + ")";
+    }
+    return r.name + " — " + actual + lim;
+  }
+  const why = [];
+  if (r.min != null && r.actual_min < r.min) {
+    why.push("min " + formatNumber(r.actual_min) + unit + " below " + formatNumber(r.min) + unit);
+  }
+  if (r.max != null && r.actual_max > r.max) {
+    why.push("max " + formatNumber(r.actual_max) + unit + " above " + formatNumber(r.max) + unit);
+  }
+  return r.name + " — " + actual + "; " + why.join("; ");
+}
+
+async function renderAssertionResults() {
+  const el = document.getElementById("analyse-assertion-results");
+  if (!analyseCurrentStem || !assertionSpec.length) {
+    el.innerHTML = "";
+    return;
+  }
+  try {
+    const res = await api(`/api/captures/${analyseCurrentStem}/assertions`);
+    el.innerHTML = "";
+    const head = document.createElement("div");
+    head.className = "assertion-summary";
+    head.textContent = `${res.passed}/${res.checks} passed`;
+    el.appendChild(head);
+    for (const r of res.results || []) {
+      const line = document.createElement("div");
+      line.className = "assertion-result " + (r.pass ? "pass" : "fail");
+      const mark = document.createElement("span");
+      mark.className = "assertion-mark";
+      mark.textContent = r.pass ? "✓" : "✗";
+      const text = document.createElement("span");
+      text.textContent = checklistText(r);
+      line.append(mark, text);
+      el.appendChild(line);
+    }
+  } catch (e) {
+    el.innerHTML = "";
+  }
+}
+
 function batteryReadout(b) {
   const r = railPairs[0];
   if (!r || r.iIdx < 0) return "no current (A) channel to analyse";
@@ -2034,6 +2192,9 @@ window.addEventListener("DOMContentLoaded", () => {
   document.getElementById("analyse-power-mode").addEventListener("change", (ev) => onModeChange(ev.target.value));
   document.getElementById("analyse-power-threshold").addEventListener("input", updatePowerReadout);
   syncPowerControls();
+  document.getElementById("analyse-add-assertion").addEventListener("click", addAssertion);
+  document.getElementById("analyse-save-assertions").addEventListener("click", saveAssertions);
+  loadAssertionSpec();
   window.addEventListener("keydown", (ev) => {
     const tag = (document.activeElement && document.activeElement.tagName) || "";
     const typing = tag === "TEXTAREA" || tag === "INPUT" || tag === "SELECT";

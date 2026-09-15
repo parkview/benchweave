@@ -50,6 +50,18 @@
     .power-rail { display: inline-flex; align-items: center; gap: 0.4rem; }
     .power-rail-title { font-weight: 600; }
     .power-rail select { font-size: 0.85rem; }
+    #analyse-assertions { margin-top: 0.75rem; }
+    #analyse-assertion-rows { display: flex; flex-direction: column; gap: 0.3rem; margin: 0.4rem 0; }
+    .assertion-row { display: inline-flex; gap: 0.4rem; align-items: center; }
+    .assertion-row input[type="text"] { width: 9rem; }
+    .assertion-row input[type="number"] { width: 6rem; }
+    .assertion-row button { font-size: 0.85rem; }
+    #analyse-assertion-results { margin-top: 0.5rem; }
+    .assertion-summary { font-weight: 600; margin-bottom: 0.3rem; }
+    .assertion-result { display: flex; gap: 0.5rem; align-items: baseline; }
+    .assertion-mark { font-weight: 700; width: 1.1rem; }
+    .assertion-result.pass .assertion-mark { color: #2e7d32; }
+    .assertion-result.fail .assertion-mark { color: #b3261e; }
     #analyse-annotate { margin-top: 0.75rem; }
     #analyse-palette { display: inline-flex; flex-wrap: wrap; gap: 0.2rem; }
     .palette-chip {
@@ -268,6 +280,15 @@
         <div id="analyse-power-rails"></div>
         <span id="analyse-power-readout"></span>
       </div>
+      <div id="analyse-assertions">
+        <span class="tip">Add min/max limits per channel to check captures — pass/fail shows here and in the report.</span>
+        <datalist id="analyse-channel-names"></datalist>
+        <div id="analyse-assertion-rows"></div>
+        <button id="analyse-add-assertion" title="Add a min/max check for a channel">Add check</button>
+        <button id="analyse-save-assertions" title="Save the check list">Save checks</button>
+        <span id="analyse-assertion-status"></span>
+        <div id="analyse-assertion-results"></div>
+      </div>
     </section>
 
     <section id="analyse-retention" hidden>
@@ -280,6 +301,6 @@
     </section>
   </div>
 
-  <script src="/app.js?v=19"></script>
+  <script src="/app.js?v=20"></script>
 </body>
 </html>
