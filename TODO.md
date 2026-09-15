@@ -40,8 +40,11 @@ brush-region Ah/Wh readout. Roughly in value-per-effort order; pick individually
   and the brushed region's shaded selection + per-channel stats table.
   Per-channel min/max assertion checks (mini pass/fail, evaluated over the full
   trace and matched by channel name, with a live checklist in the Analyse tab and
-  a checks section in the report) shipped 2026-09-15.
-  **Remaining:** an MCP tool to load a capture and answer questions about it.
+  a checks section in the report) shipped 2026-09-15. MCP capture tools
+  (`list_captures`, `load_capture`, `capture_series`) on the `benchweave-adc`
+  server let an AI client list saved captures, load one as a compact per-channel
+  summary, and pull a single channel's full trace to answer questions about a run
+  — shipped 2026-09-15. ✅ **done**.
 
 **Low priority (keep in mind for later):**
 
