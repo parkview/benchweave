@@ -18,4 +18,4 @@ echo "BenchWeave ADC web frontend"
 echo "  local:   http://localhost:${PORT}"
 echo "  network: http://${HOST}:${PORT}"
 echo
-exec uv run uvicorn benchweave.web.app:app --host "$HOST" --port "$PORT"
+exec uv run uvicorn benchweave.web.app:app --host "$HOST" --port "$PORT" --reload
