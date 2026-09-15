@@ -32,7 +32,9 @@ brush-region Ah/Wh readout. Roughly in value-per-effort order; pick individually
   in/out energy; sleep active/sleep duty + threshold; load-step ΔV/ΔI → R.
   Per-capture persistence of mode + rail pairing (by channel name) with a
   global default, and reuse of the last pairing when names match, shipped
-  2026-09-15. **Remaining:** mode-shaped HTML reports.
+  2026-09-15. ✅ **done 2026-09-15**: the HTML report now includes a
+  mode-shaped power-analysis section (battery / DC-DC / sleep / load-step)
+  with the active region shaded green — mirroring the live readout.
 - **Reporting & automation** — ✅ **done 2026-09-15**: self-contained HTML report
   export — inline SVG chart, A–Z letter markers (drag-from-palette) with notes,
   and the brushed region's shaded selection + per-channel stats table.

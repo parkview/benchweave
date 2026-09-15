@@ -1230,10 +1230,23 @@ async function generateReport() {
   }
   const lo = brushStart === null ? null : Math.min(brushStart, brushEnd);
   const hi = brushStart === null ? null : Math.max(brushStart, brushEnd);
+  const thrRaw = document.getElementById("analyse-power-threshold").value.trim();
+  const thr = thrRaw === "" ? null : parseFloat(thrRaw);
+  const power = {
+    mode: powerMode,
+    rails: railPairs.map((p) => ({
+      v: p.vIdx >= 0 ? analyseData.series[p.vIdx].name : null,
+      i: p.iIdx >= 0 ? analyseData.series[p.iIdx].name : null,
+    })),
+    capacity_ah: capacityAh(),
+    threshold: Number.isFinite(thr) ? thr : null,
+    lo: powerLo,
+    hi: powerHi,
+  };
   try {
     const res = await api(`/api/captures/${analyseCurrentStem}/report`, {
       method: "POST",
-      body: JSON.stringify({ lo, hi }),
+      body: JSON.stringify({ lo, hi, power }),
     });
     document.getElementById("analyse-annotate-status").textContent =
       "report generated: " + res.name;

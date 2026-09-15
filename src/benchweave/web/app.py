@@ -80,9 +80,24 @@ class AnnotationsBody(BaseModel):
     markers: list[dict[str, Any]]
 
 
+class PowerRailBody(BaseModel):
+    v: str | None = None
+    i: str | None = None
+
+
+class PowerReportBody(BaseModel):
+    mode: str = "battery"
+    rails: list[PowerRailBody] = []
+    capacity_ah: float | None = None
+    threshold: float | None = None
+    lo: float | None = None
+    hi: float | None = None
+
+
 class ReportBody(BaseModel):
     lo: float | None = None
     hi: float | None = None
+    power: PowerReportBody | None = None
 
 
 class PowerBody(BaseModel):
@@ -310,7 +325,9 @@ def generate_report(stem: str, body: ReportBody) -> dict[str, object]:
     lo, hi = body.lo, body.hi
     if lo is not None and hi is not None and lo > hi:
         lo, hi = hi, lo
-    html = build_report(data, markers, lo, hi)
+    html = build_report(
+        data, markers, lo, hi, body.power.model_dump() if body.power else None
+    )
     out = csv.with_suffix(".html")
     out.write_text(html)
     return {"stem": stem, "name": out.name, "path": str(out)}

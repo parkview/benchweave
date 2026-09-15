@@ -41,6 +41,18 @@ def _fmt(v: float) -> str:
     return ("-" if v < 0 else "") + s
 
 
+def _fmt_signed(v: float) -> str:
+    return ("+" if v >= 0 else "-") + _fmt(abs(v))
+
+
+_MODE_LABELS = {
+    "battery": "Battery drain",
+    "dc-dc": "DC-DC efficiency",
+    "sleep": "Sleep / wake",
+    "load-step": "Load step (R)",
+}
+
+
 def _fmt_time(t: float) -> str:
     if t < 0.001:
         return f"{t * 1e6:.0f} µs"
@@ -166,6 +178,7 @@ def build_report(
     markers: list[dict[str, Any]],
     lo: float | None,
     hi: float | None,
+    power: dict[str, Any] | None = None,
 ) -> str:
     """Return a complete HTML document for the capture."""
     name = str(data.get("name", "capture"))
@@ -194,9 +207,17 @@ def build_report(
     y_left = _pad(y_left)
     y_right = _pad(y_right)
 
+    plo = phi = None
+    if power:
+        raw_lo = power.get("lo")
+        raw_hi = power.get("hi")
+        if raw_lo is not None and raw_hi is not None:
+            plo = min(float(cast(Any, raw_lo)), float(cast(Any, raw_hi)))
+            phi = max(float(cast(Any, raw_lo)), float(cast(Any, raw_hi)))
+
     svg = _render_svg(
         name, series, left_idx, right_idx, duration,
-        y_left, y_right, lo, hi, markers,
+        y_left, y_right, lo, hi, markers, plo, phi,
     )
 
     notes_rows = ""
@@ -220,6 +241,10 @@ def build_report(
     if lo is not None and hi is not None:
         stats_block = _render_region(series, lo, hi)
 
+    power_block = ""
+    if power:
+        power_block = _render_power(series, power, duration)
+
     meta_bits = []
     if meta.get("note"):
         meta_bits.append(str(meta["note"]))
@@ -235,7 +260,7 @@ def build_report(
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
         f"<title>{_esc(name)}</title>\n<style>{_css()}</style>\n</head>\n<body>\n"
         f'<header><h1>{_esc(name)}</h1><p class="meta">{_esc(meta_line)}</p></header>\n'
-        f'<div class="chart">{svg}</div>\n{notes_block}{stats_block}\n'
+        f'<div class="chart">{svg}</div>\n{notes_block}{stats_block}{power_block}\n'
         "</body>\n</html>\n"
     )
 
@@ -256,6 +281,8 @@ def _render_svg(
     lo: float | None,
     hi: float | None,
     markers: list[dict[str, Any]],
+    plo: float | None = None,
+    phi: float | None = None,
 ) -> str:
     plot_x = _M["left"]
     plot_y = _M["top"]
@@ -329,6 +356,20 @@ def _render_svg(
             parts.append(
                 f'<line x1="{xx:.2f}" y1="{plot_y}" x2="{xx:.2f}" '
                 f'y2="{plot_y + plot_h}" stroke="rgba(67, 99, 216, 0.85)" '
+                f'stroke-dasharray="4,3"/>'
+            )
+
+    if plo is not None and phi is not None:
+        gx1 = px(max(0.0, plo))
+        gx2 = px(min(xmax, phi))
+        parts.append(
+            f'<rect x="{gx1:.2f}" y="{plot_y}" width="{gx2 - gx1:.2f}" height="{plot_h}" '
+            f'fill="rgba(60, 180, 75, 0.12)"/>'
+        )
+        for xx in (gx1, gx2):
+            parts.append(
+                f'<line x1="{xx:.2f}" y1="{plot_y}" x2="{xx:.2f}" '
+                f'y2="{plot_y + plot_h}" stroke="rgba(60, 180, 75, 0.9)" '
                 f'stroke-dasharray="4,3"/>'
             )
 
@@ -407,6 +448,250 @@ def _render_region(series: list[Series], lo: float, hi: float) -> str:
         f'{_fmt_time(lo)} → {_fmt_time(hi)} (Δ {_fmt_time(hi - lo)})</h2>'
         f'<p class="summary">{summary}</p>'
         f'<table><thead><tr>{header}</tr></thead><tbody>{rows}</tbody></table></section>'
+    )
+
+
+def _index_of_name(series: list[Series], name: object) -> int:
+    if not name:
+        return -1
+    wanted = str(name)
+    for i, s in enumerate(series):
+        if str(s.get("name", "")) == wanted:
+            return i
+    return -1
+
+
+def _region_points(points: Points, lo: float, hi: float) -> Points:
+    return [
+        [t, v]
+        for t, v in points
+        if t is not None and v is not None and lo <= t <= hi
+    ]
+
+
+def _mean(pts: Points) -> float | None:
+    vals = [v for _, v in pts if v is not None]
+    if not vals:
+        return None
+    return sum(vals) / len(vals)
+
+
+def _rail_stats(
+    series: list[Series], v_idx: int, i_idx: int, lo: float, hi: float
+) -> dict[str, Any] | None:
+    if i_idx < 0 or i_idx >= len(series):
+        return None
+    amps = _pts(series[i_idx])
+    i_stats = _region_stats(amps, lo, hi)
+    if i_stats is None:
+        return None
+    out: dict[str, Any] = {
+        "i": i_stats,
+        "v": None,
+        "p": None,
+        "ah": _trapezoid(amps, lo, hi) / 3600.0,
+        "wh": None,
+    }
+    if 0 <= v_idx < len(series):
+        volts = _pts(series[v_idx])
+        out["v"] = _region_stats(volts, lo, hi)
+        out["wh"] = _trapezoid(_power_points(volts, amps), lo, hi) / 3600.0
+        out["p"] = _power_region_stats(volts, amps, lo, hi)
+    return out
+
+
+def _battery_bits(
+    series: list[Series],
+    rail: dict[str, Any],
+    lo: float,
+    hi: float,
+    capacity: float | None,
+) -> str | None:
+    s = _rail_stats(
+        series,
+        _index_of_name(series, rail.get("v")),
+        _index_of_name(series, rail.get("i")),
+        lo,
+        hi,
+    )
+    if s is None:
+        return None
+    i_stats = s["i"]
+    bits = [f"∫ {_fmt_signed(s['ah'])} Ah"]
+    if s["wh"] is not None:
+        bits.append(f"{_fmt_signed(s['wh'])} Wh")
+    bits.append(f"{_fmt(i_stats['mean'])} A avg · {_fmt(i_stats['max'])} A pk")
+    if s["v"] is not None:
+        bits.append(f"{_fmt(s['v']['mean'])} V avg (min {_fmt(s['v']['min'])})")
+    if s["p"] is not None:
+        bits.append(f"{_fmt(s['p'][0])} W avg · {_fmt(s['p'][1])} W pk")
+    if capacity is not None and i_stats["mean"] > 1e-9:
+        bits.append(f"~{_fmt(capacity / i_stats['mean'])} h @ {_fmt(capacity)} Ah")
+    return "  ·  ".join(bits)
+
+
+def _dcdc_bits(
+    series: list[Series], rails: list[dict[str, Any]], lo: float, hi: float
+) -> str | None:
+    if len(rails) < 2:
+        return None
+    in_s = _rail_stats(
+        series,
+        _index_of_name(series, rails[0].get("v")),
+        _index_of_name(series, rails[0].get("i")),
+        lo,
+        hi,
+    )
+    out_s = _rail_stats(
+        series,
+        _index_of_name(series, rails[1].get("v")),
+        _index_of_name(series, rails[1].get("i")),
+        lo,
+        hi,
+    )
+    if (
+        in_s is None
+        or out_s is None
+        or in_s["v"] is None
+        or out_s["v"] is None
+        or in_s["p"] is None
+        or out_s["p"] is None
+    ):
+        return None
+    pin = in_s["p"][0]
+    pout = out_s["p"][0]
+    bits = [
+        f"Vin {_fmt(in_s['v']['mean'])} V · Iin {_fmt(in_s['i']['mean'])} A "
+        f"· Pin {_fmt(pin)} W",
+        f"Vout {_fmt(out_s['v']['mean'])} V · Iout {_fmt(out_s['i']['mean'])} A "
+        f"· Pout {_fmt(pout)} W",
+    ]
+    if abs(pin) > 1e-9:
+        bits.append(f"η {_fmt((pout / pin) * 100)} %")
+    bits.append(f"∫ in {_fmt_signed(in_s['wh'])} Wh · out {_fmt_signed(out_s['wh'])} Wh")
+    return "  ·  ".join(bits)
+
+
+def _sleep_bits(
+    series: list[Series],
+    rail: dict[str, Any],
+    lo: float,
+    hi: float,
+    threshold: float | None,
+) -> str | None:
+    i_idx = _index_of_name(series, rail.get("i"))
+    if i_idx < 0:
+        return None
+    amps = _pts(series[i_idx])
+    i_stats = _region_stats(amps, lo, hi)
+    if i_stats is None:
+        return None
+    thr = threshold if threshold is not None else (i_stats["min"] + i_stats["max"]) / 2.0
+    active_n = 0
+    sleep_n = 0
+    active_sum = 0.0
+    sleep_sum = 0.0
+    for t, v in amps:
+        if t is None or v is None or t < lo or t > hi:
+            continue
+        if v > thr:
+            active_n += 1
+            active_sum += v
+        else:
+            sleep_n += 1
+            sleep_sum += v
+    total = active_n + sleep_n
+    if total == 0:
+        return None
+    duty = active_n / total * 100.0
+    active_avg = active_sum / active_n if active_n else 0.0
+    sleep_avg = sleep_sum / sleep_n if sleep_n else 0.0
+    return "  ·  ".join(
+        [
+            f"active {_fmt(duty)} % · sleep {_fmt(100.0 - duty)} %",
+            f"I active {_fmt(active_avg)} A · sleep {_fmt(sleep_avg)} A",
+            f"∫ {_fmt_signed(_trapezoid(amps, lo, hi) / 3600.0)} Ah",
+        ]
+    )
+
+
+def _load_step_stats(
+    series: list[Series], v_idx: int, i_idx: int, lo: float, hi: float
+) -> dict[str, Any] | None:
+    volts = _region_points(_pts(series[v_idx]), lo, hi)
+    amps = _region_points(_pts(series[i_idx]), lo, hi)
+    n = min(len(volts), len(amps))
+    if n < 3:
+        return None
+    head = max(1, int(n * 0.15))
+    v0 = _mean(volts[:head])
+    v1 = _mean(volts[-head:])
+    i0 = _mean(amps[:head])
+    i1 = _mean(amps[-head:])
+    if v0 is None or v1 is None or i0 is None or i1 is None:
+        return None
+    dv = v1 - v0
+    di = i1 - i0
+    r = -dv / di if abs(di) > 1e-9 else None
+    return {"v0": v0, "v1": v1, "i0": i0, "i1": i1, "dv": dv, "di": di, "r": r}
+
+
+def _load_step_bits(
+    series: list[Series], rail: dict[str, Any], lo: float, hi: float
+) -> str | None:
+    v_idx = _index_of_name(series, rail.get("v"))
+    i_idx = _index_of_name(series, rail.get("i"))
+    if v_idx < 0 or i_idx < 0:
+        return None
+    s = _load_step_stats(series, v_idx, i_idx, lo, hi)
+    if s is None:
+        return None
+    bits = [f"ΔV {_fmt(s['dv'])} V · ΔI {_fmt(s['di'])} A"]
+    if s["r"] is not None:
+        bits.append(f"R {_fmt(s['r'])} Ω")
+    bits.append(
+        f"V {_fmt(s['v0'])}→{_fmt(s['v1'])} V · I {_fmt(s['i0'])}→{_fmt(s['i1'])} A"
+    )
+    return "  ·  ".join(bits)
+
+
+def _render_power(series: list[Series], power: dict[str, Any], duration: float) -> str:
+    mode = str(power.get("mode", "battery"))
+    rails = cast(list[dict[str, Any]], power.get("rails") or [])
+    capacity = cast(float | None, power.get("capacity_ah"))
+    threshold = cast(float | None, power.get("threshold"))
+
+    raw_lo = power.get("lo")
+    raw_hi = power.get("hi")
+    region = raw_lo is not None and raw_hi is not None
+    if region:
+        a = float(cast(Any, raw_lo))
+        b = float(cast(Any, raw_hi))
+        lo, hi = min(a, b), max(a, b)
+    else:
+        lo, hi = 0.0, duration
+
+    if not rails:
+        return ""
+    rail = rails[0]
+    if mode == "battery":
+        bits = _battery_bits(series, rail, lo, hi, capacity)
+    elif mode == "dc-dc":
+        bits = _dcdc_bits(series, rails, lo, hi)
+    elif mode == "sleep":
+        bits = _sleep_bits(series, rail, lo, hi, threshold)
+    elif mode == "load-step":
+        bits = _load_step_bits(series, rail, lo, hi)
+    else:
+        return ""
+    if not bits:
+        return ""
+
+    label = _MODE_LABELS.get(mode, mode)
+    scope = f"region {_fmt_time(lo)} → {_fmt_time(hi)}" if region else f"full {_fmt_time(duration)}"
+    return (
+        f'<section class="power"><h2>Power analysis — {_esc(label)}</h2>'
+        f'<p class="summary">{_esc(scope)}  ·  {bits}</p></section>'
     )
 
 

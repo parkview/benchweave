@@ -51,3 +51,48 @@ def test_build_report_escapes_note_html() -> None:
     html = build_report(DATA, markers, None, None)
     assert "<script>alert(1)</script>" not in html
     assert "&lt;script&gt;" in html
+
+
+def test_build_report_power_battery_section() -> None:
+    power = {
+        "mode": "battery",
+        "rails": [{"v": "Voltage", "i": "Current"}],
+        "capacity_ah": 2.0,
+    }
+    html = build_report(DATA, [], None, None, power)
+    assert "Power analysis" in html
+    assert "Battery drain" in html
+    assert "Ah" in html
+    assert "Wh" in html
+    assert "h @ 2.000 Ah" in html  # runtime estimate from capacity
+
+
+def test_build_report_power_dcdc_section() -> None:
+    power = {
+        "mode": "dc-dc",
+        "rails": [
+            {"v": "Voltage", "i": "Current"},
+            {"v": "Voltage", "i": "Current"},
+        ],
+    }
+    html = build_report(DATA, [], None, None, power)
+    assert "DC-DC efficiency" in html
+    assert "η" in html
+
+
+def test_build_report_power_unmatched_rail_omits_section() -> None:
+    power = {"mode": "battery", "rails": [{"v": "Nope", "i": "Missing"}]}
+    html = build_report(DATA, [], None, None, power)
+    assert "Power analysis" not in html
+
+
+def test_build_report_power_shades_region() -> None:
+    power = {
+        "mode": "battery",
+        "rails": [{"v": "Voltage", "i": "Current"}],
+        "lo": 0.5,
+        "hi": 2.0,
+    }
+    html = build_report(DATA, [], None, None, power)
+    assert "rgba(60, 180, 75" in html  # green power-region fill
+    assert "region 500.00 ms → 2.000 s" in html
