@@ -44,6 +44,8 @@
     #analyse-region-stats td { font-variant-numeric: tabular-nums; }
     #analyse-edge { margin-top: 0.75rem; }
     #analyse-edge-readout { margin-left: 1rem; font-variant-numeric: tabular-nums; }
+    #analyse-power { margin-top: 0.75rem; }
+    #analyse-power-readout { margin-left: 1rem; font-variant-numeric: tabular-nums; }
     #analyse-annotate { margin-top: 0.75rem; }
     #analyse-palette { display: inline-flex; flex-wrap: wrap; gap: 0.2rem; }
     .palette-chip {
@@ -197,7 +199,7 @@
           <select id="analyse-v-select"></select>
         </label>
         <button id="analyse-reset-zoom" title="Clear the zoom window and region selection">Reset zoom</button>
-        <span class="tip">Drag to select a region · scroll to zoom</span>
+        <span class="tip">Drag to measure · hold p to select the power region · scroll to zoom</span>
         <span id="analyse-integral"></span>
       </div>
       <div id="analyse-chart-box"><canvas id="analyse-chart"></canvas></div>
@@ -237,6 +239,18 @@
         </label>
         <span id="analyse-edge-readout"></span>
       </div>
+      <div id="analyse-power">
+        <span class="tip">Hold <strong>p</strong> and drag to mark the span to analyse (green); click with <strong>p</strong> to clear it and analyse the whole trace.</span>
+        <label title="Nominal battery capacity, used for the runtime estimate">Capacity:
+          <input type="number" id="analyse-power-capacity" min="0" step="any" placeholder="e.g. 2000">
+          <select id="analyse-power-capacity-unit">
+            <option value="mAh">mAh</option>
+            <option value="Ah">Ah</option>
+          </select>
+        </label>
+        <button id="analyse-power-clear" title="Clear the power region and analyse the whole trace">Clear region</button>
+        <span id="analyse-power-readout"></span>
+      </div>
     </section>
 
     <section id="analyse-retention" hidden>
@@ -249,6 +263,6 @@
     </section>
   </div>
 
-  <script src="/app.js?v=16"></script>
+  <script src="/app.js?v=17"></script>
 </body>
 </html>

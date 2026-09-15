@@ -25,6 +25,10 @@ let brushDragging = false;
 let analyseMarkers = []; // [{label, t, note}] sorted by label
 let selectedMarker = null; // label of the selected marker
 let draggingMarker = null; // label being dragged
+let pKeyHeld = false; // 'p' modifier: drag selects the power-analysis region
+let powerLo = null; // power-analysis region bounds (elapsed s)
+let powerHi = null;
+let powerDragging = false;
 
 const brushPlugin = {
   id: "brush",
@@ -84,6 +88,24 @@ const markerPlugin = {
   },
 };
 
+const powerRegionPlugin = {
+  id: "power-region",
+  afterDraw(chart) {
+    if (powerLo === null || powerHi === null) return;
+    const x = chart.scales.x;
+    const x1 = x.getPixelForValue(Math.min(powerLo, powerHi));
+    const x2 = x.getPixelForValue(Math.max(powerLo, powerHi));
+    const ctx = chart.ctx;
+    ctx.save();
+    ctx.fillStyle = "rgba(60, 180, 75, 0.12)";
+    ctx.fillRect(x1, chart.chartArea.top, x2 - x1, chart.chartArea.bottom - chart.chartArea.top);
+    ctx.strokeStyle = "rgba(60, 180, 75, 0.9)";
+    ctx.setLineDash([4, 3]);
+    ctx.strokeRect(x1, chart.chartArea.top, x2 - x1, chart.chartArea.bottom - chart.chartArea.top);
+    ctx.restore();
+  },
+};
+
 // -- Chart setup ------------------------------------------------------------
 
 function initChart() {
@@ -118,7 +140,7 @@ function initAnalyseChart() {
   analyseChart = new Chart(el, {
     type: "line",
     data: { datasets: [] },
-    plugins: [brushPlugin, markerPlugin],
+    plugins: [brushPlugin, markerPlugin, powerRegionPlugin],
     options: {
       animation: false,
       maintainAspectRatio: false,
@@ -193,6 +215,15 @@ function attachAnalyseChartEvents(el) {
       analyseChart.update("none");
       return;
     }
+    if (pKeyHeld) {
+      powerDragging = true;
+      powerLo = analyseChart.scales.x.getValueForPixel(ev.offsetX);
+      powerHi = powerLo;
+      selectedMarker = null;
+      updateRemoveButton();
+      analyseChart.update("none");
+      return;
+    }
     brushDragging = true;
     brushStart = analyseChart.scales.x.getValueForPixel(ev.offsetX);
     brushEnd = brushStart;
@@ -214,6 +245,14 @@ function attachAnalyseChartEvents(el) {
       }
       return;
     }
+    if (powerDragging) {
+      if (px >= analyseChart.chartArea.left && px <= analyseChart.chartArea.right) {
+        powerHi = analyseChart.scales.x.getValueForPixel(px);
+        updatePowerReadout();
+        analyseChart.update("none");
+      }
+      return;
+    }
     if (!brushDragging) return;
     if (px < analyseChart.chartArea.left || px > analyseChart.chartArea.right) return;
     brushEnd = analyseChart.scales.x.getValueForPixel(px);
@@ -224,6 +263,14 @@ function attachAnalyseChartEvents(el) {
     if (draggingMarker) {
       draggingMarker = null;
       syncNotesArea();
+      return;
+    }
+    if (powerDragging) {
+      powerDragging = false;
+      if (powerLo !== null && Math.abs(powerHi - powerLo) < 1e-9) {
+        powerLo = powerHi = null;
+      }
+      updatePowerReadout();
       return;
     }
     if (!brushDragging) return;
@@ -994,6 +1041,7 @@ async function loadCapture(stem) {
     analyseData = data;
     analyseZoom = { min: null, max: null };
     brushStart = brushEnd = null;
+    powerLo = powerHi = null;
     document.getElementById("analyse-viewer").hidden = false;
     document.getElementById("analyse-file-name").textContent = data.name;
     const metaBits = [];
@@ -1011,6 +1059,7 @@ async function loadCapture(stem) {
     renderEdgeSelect();
     await loadAnnotations();
     renderAnalyseChart();
+    updatePowerReadout();
   } catch (e) {
     document.getElementById("analyse-status").textContent = "plot error: " + e.message;
   }
@@ -1316,6 +1365,81 @@ function updateIntegralReadout() {
   renderEdgeAnalysis(lo, hi);
 }
 
+function powerBounds() {
+  if (powerLo !== null && powerHi !== null && Math.abs(powerHi - powerLo) > 1e-9) {
+    return { lo: Math.min(powerLo, powerHi), hi: Math.max(powerLo, powerHi), region: true };
+  }
+  if (!analyseData || analyseData.series.length === 0) return null;
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const s of analyseData.series) {
+    if (s.points.length === 0) continue;
+    lo = Math.min(lo, s.points[0][0]);
+    hi = Math.max(hi, s.points[s.points.length - 1][0]);
+  }
+  if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi <= lo) return null;
+  return { lo, hi, region: false };
+}
+
+function capacityAh() {
+  const input = document.getElementById("analyse-power-capacity");
+  const raw = input.value.trim();
+  if (raw === "") return null;
+  const v = parseFloat(raw);
+  if (!Number.isFinite(v) || v <= 0) return null;
+  const unit = document.getElementById("analyse-power-capacity-unit").value;
+  return unit === "mAh" ? v / 1000 : v;
+}
+
+function computePowerSummary() {
+  const b = powerBounds();
+  if (!b) return null;
+  const iIdx = currentSeriesIndex();
+  if (iIdx < 0) return { bounds: b, noCurrent: true };
+  const I = analyseData.series[iIdx].points;
+  const iStats = regionStats(I, b.lo, b.hi);
+  if (!iStats) return { bounds: b, noCurrent: true };
+  const out = { bounds: b, ah: null, wh: null, iStats, vStats: null, pStats: null };
+  out.ah = trapezoid(I, b.lo, b.hi) / 3600;
+  const vIdx = Number(document.getElementById("analyse-v-select").value) || 0;
+  if (vIdx >= 0 && vIdx < analyseData.series.length) {
+    const V = analyseData.series[vIdx].points;
+    out.vStats = regionStats(V, b.lo, b.hi);
+    out.wh = trapezoid(powerPoints(V, I), b.lo, b.hi) / 3600;
+    out.pStats = powerRegionStats(V, I, b.lo, b.hi);
+  }
+  return out;
+}
+
+function updatePowerReadout() {
+  const el = document.getElementById("analyse-power-readout");
+  const sum = computePowerSummary();
+  if (!sum) {
+    el.textContent = "";
+    return;
+  }
+  if (sum.noCurrent) {
+    el.textContent = "no current (A) channel to analyse";
+    return;
+  }
+  const b = sum.bounds;
+  const bits = [`${b.region ? "region" : "full"} ${formatNumber(b.hi - b.lo)} s`];
+  bits.push(`∫ ${formatSigned(sum.ah)} Ah`);
+  if (sum.wh != null) bits.push(`${formatSigned(sum.wh)} Wh`);
+  bits.push(`${formatNumber(sum.iStats.mean)} A avg · ${formatNumber(sum.iStats.max)} A pk`);
+  if (sum.vStats) {
+    bits.push(`${formatNumber(sum.vStats.mean)} V avg (min ${formatNumber(sum.vStats.min)})`);
+  }
+  if (sum.pStats) {
+    bits.push(`${formatNumber(sum.pStats.mean)} W avg · ${formatNumber(sum.pStats.peak)} W pk`);
+  }
+  const cap = capacityAh();
+  if (cap != null && sum.iStats.mean > 1e-9) {
+    bits.push(`~${formatNumber(cap / sum.iStats.mean)} h @ ${formatNumber(cap)} Ah`);
+  }
+  el.textContent = bits.join("  ·  ");
+}
+
 function clearRegionStats() {
   document.getElementById("analyse-region-stats").hidden = true;
   document.getElementById("analyse-region-stats-body").innerHTML = "";
@@ -1491,6 +1615,7 @@ function onResetZoom() {
 
 function onVoltageChange() {
   updateIntegralReadout();
+  updatePowerReadout();
 }
 
 async function assignProject(stem, project) {
@@ -1620,12 +1745,32 @@ window.addEventListener("DOMContentLoaded", () => {
   document.getElementById("analyse-save-annotations").addEventListener("click", saveAnnotations);
   document.getElementById("analyse-report").addEventListener("click", generateReport);
   document.getElementById("analyse-notes").addEventListener("input", parseNotesArea);
+  document.getElementById("analyse-power-clear").addEventListener("click", () => {
+    powerLo = powerHi = null;
+    updatePowerReadout();
+    if (analyseChart) analyseChart.update("none");
+  });
+  document.getElementById("analyse-power-capacity").addEventListener("input", updatePowerReadout);
+  document.getElementById("analyse-power-capacity-unit").addEventListener("change", updatePowerReadout);
   window.addEventListener("keydown", (ev) => {
     const tag = (document.activeElement && document.activeElement.tagName) || "";
-    if (tag === "TEXTAREA" || tag === "INPUT" || tag === "SELECT") return;
+    const typing = tag === "TEXTAREA" || tag === "INPUT" || tag === "SELECT";
+    if (ev.key === "p" || ev.key === "P") {
+      if (typing) return;
+      pKeyHeld = true;
+      if (analyseChart) analyseChart.canvas.style.cursor = "crosshair";
+      return;
+    }
+    if (typing) return;
     if ((ev.key === "Delete" || ev.key === "Backspace") && selectedMarker) {
       ev.preventDefault();
       removeMarker(selectedMarker);
+    }
+  });
+  window.addEventListener("keyup", (ev) => {
+    if (ev.key === "p" || ev.key === "P") {
+      pKeyHeld = false;
+      if (analyseChart) analyseChart.canvas.style.cursor = "";
     }
   });
 
