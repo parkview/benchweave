@@ -4,7 +4,7 @@ Open items, newest first. Dates are when the item was logged.
 
 ## Analyse page — further analysis & measurement features
 
-Logged 2026-09-14 · **partially done** — region inspector + edge/timing shipped; the rest are candidates.
+Logged 2026-09-14 · **partially done** — region inspector, edge/timing, and HTML report export shipped; the rest are candidates.
 
 Candidate features for the Analyse tab, building on the existing CSV plot and
 brush-region Ah/Wh readout. Roughly in value-per-effort order; pick individually.
@@ -28,9 +28,11 @@ brush-region Ah/Wh readout. Roughly in value-per-effort order; pick individually
 - **Power / battery** — full-trace Ah/Wh totals (not just brushed regions);
   sleep/wake profiling and battery-life estimate; internal resistance from a load
   step (ΔV/ΔI).
-- **Reporting & automation** — self-contained HTML report export; per-channel
-  min/max assertion checks (mini pass/fail); an MCP tool to load a capture and
-  answer questions about it.
+- **Reporting & automation** — ✅ **done 2026-09-15**: self-contained HTML report
+  export — inline SVG chart, A–Z letter markers (drag-from-palette) with notes,
+  and the brushed region's shaded selection + per-channel stats table.
+  **Remaining:** per-channel min/max assertion checks (mini pass/fail); an MCP
+  tool to load a capture and answer questions about it.
 
 **Low priority (keep in mind for later):**
 
