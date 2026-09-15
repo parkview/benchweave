@@ -30,8 +30,9 @@ brush-region Ah/Wh readout. Roughly in value-per-effort order; pick individually
   auto-guessed V↔I rail pairing (editable pickers). Readouts: battery
   Ah/Wh/avg/peak + capacity→runtime; DC-DC Vin/Iin/Pin, Vout/Iout/Pout, η and
   in/out energy; sleep active/sleep duty + threshold; load-step ΔV/ΔI → R.
-  **Remaining:** per-capture persistence + a global default; reuse the last
-  channel mapping when names match; mode-shaped HTML reports.
+  Per-capture persistence of mode + rail pairing (by channel name) with a
+  global default, and reuse of the last pairing when names match, shipped
+  2026-09-15. **Remaining:** mode-shaped HTML reports.
 - **Reporting & automation** — ✅ **done 2026-09-15**: self-contained HTML report
   export — inline SVG chart, A–Z letter markers (drag-from-palette) with notes,
   and the brushed region's shaded selection + per-channel stats table.
