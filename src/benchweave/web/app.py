@@ -85,6 +85,15 @@ class ReportBody(BaseModel):
     hi: float | None = None
 
 
+class PowerBody(BaseModel):
+    mode: str = "battery"
+    rails: list[dict[str, Any]] = []
+
+
+class DefaultModeBody(BaseModel):
+    mode: str = "battery"
+
+
 @app.get("/api/boards")
 def list_boards() -> list[dict[str, object]]:
     return manager.discover()
@@ -270,6 +279,25 @@ def set_annotations(stem: str, body: AnnotationsBody) -> dict[str, object]:
     if library.file_for(stem, "csv") is None:
         raise HTTPException(status_code=404, detail=f"no CSV for '{stem}'")
     return {"markers": library.set_annotations(stem, body.markers)}
+
+
+@app.get("/api/captures/{stem}/power")
+def get_power(stem: str) -> dict[str, object]:
+    if library.file_for(stem, "csv") is None:
+        raise HTTPException(status_code=404, detail=f"no CSV for '{stem}'")
+    return library.get_power(stem)
+
+
+@app.put("/api/captures/{stem}/power")
+def set_power(stem: str, body: PowerBody) -> dict[str, object]:
+    if library.file_for(stem, "csv") is None:
+        raise HTTPException(status_code=404, detail=f"no CSV for '{stem}'")
+    return library.set_power(stem, body.model_dump())
+
+
+@app.put("/api/power/default")
+def set_power_default(body: DefaultModeBody) -> dict[str, object]:
+    return {"mode": library.set_default_mode(body.mode)}
 
 
 @app.post("/api/captures/{stem}/report")

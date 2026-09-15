@@ -31,6 +31,7 @@ _STEM_RE = re.compile(
 _PHYSICAL_LINE = re.compile(r"^(.*?)\s*\(([^)]*)\)$")
 _COMPUTED_LINE = re.compile(r"^(.*?)\s*\(([^)]*)\)\s*=\s*(.*)$")
 _FILE_SUFFIXES = (".csv", ".png", ".html")
+_POWER_MODES = ("battery", "dc-dc", "sleep", "load-step")
 
 
 class CaptureLibrary:
@@ -70,6 +71,15 @@ class CaptureLibrary:
                     "CREATE TABLE IF NOT EXISTS annotations ("
                     "stem TEXT PRIMARY KEY REFERENCES captures(stem) ON DELETE CASCADE, "
                     "markers TEXT NOT NULL)"
+                )
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS power_analysis ("
+                    "stem TEXT PRIMARY KEY REFERENCES captures(stem) ON DELETE CASCADE, "
+                    "json TEXT NOT NULL, saved_at TEXT NOT NULL)"
+                )
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS settings ("
+                    "key TEXT PRIMARY KEY, value TEXT)"
                 )
         finally:
             conn.close()
@@ -242,6 +252,136 @@ class CaptureLibrary:
             out.append({"label": label, "t": t, "note": str(m.get("note", ""))})
         out.sort(key=lambda m: str(m["label"]))
         return out
+
+    # -- power analysis ------------------------------------------------------
+
+    def get_setting(self, key: str, default: str | None = None) -> str | None:
+        conn = self._connect()
+        try:
+            with self._lock, conn:
+                row = conn.execute(
+                    "SELECT value FROM settings WHERE key = ?", (key,)
+                ).fetchone()
+        finally:
+            conn.close()
+        return row["value"] if row else default
+
+    def set_setting(self, key: str, value: str) -> None:
+        conn = self._connect()
+        try:
+            with self._lock, conn:
+                conn.execute(
+                    "INSERT INTO settings (key, value) VALUES (?, ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    (key, value),
+                )
+        finally:
+            conn.close()
+
+    def set_default_mode(self, mode: str) -> str:
+        if mode not in _POWER_MODES:
+            mode = "battery"
+        self.set_setting("power_mode", mode)
+        return mode
+
+    @staticmethod
+    def _clean_power(state: dict[str, object]) -> dict[str, object]:
+        mode = str(state.get("mode", "battery"))
+        if mode not in _POWER_MODES:
+            mode = "battery"
+        rails: list[dict[str, str | None]] = []
+        raw_rails = state.get("rails")
+        if isinstance(raw_rails, list):
+            for rail in raw_rails:
+                if len(rails) >= 2:
+                    break
+                if not isinstance(rail, dict):
+                    continue
+                rails.append(
+                    {
+                        "v": str(rail["v"]) if rail.get("v") else None,
+                        "i": str(rail["i"]) if rail.get("i") else None,
+                    }
+                )
+        return {"mode": mode, "rails": rails}
+
+    @staticmethod
+    def _decode_power(raw: str) -> dict[str, object]:
+        try:
+            data = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return {"mode": "battery", "rails": []}
+        if not isinstance(data, dict):
+            return {"mode": "battery", "rails": []}
+        return CaptureLibrary._clean_power(cast(dict[str, object], data))
+
+    def _channel_names(self, stem: str) -> set[str]:
+        csv = self.file_for(stem, "csv")
+        if csv is None:
+            return set()
+        _, descs = self._read_metadata(csv)
+        return {d["name"] for d in descs}
+
+    def get_power(self, stem: str) -> dict[str, object]:
+        names = self._channel_names(stem)
+        conn = self._connect()
+        try:
+            with self._lock, conn:
+                row = conn.execute(
+                    "SELECT json FROM power_analysis WHERE stem = ?", (stem,)
+                ).fetchone()
+                if row is not None:
+                    state = self._decode_power(row["json"])
+                    return {
+                        "mode": state["mode"],
+                        "rails": state["rails"],
+                        "source": "capture",
+                    }
+                for r in conn.execute(
+                    "SELECT json FROM power_analysis ORDER BY saved_at DESC"
+                ):
+                    state = self._decode_power(r["json"])
+                    rails = cast(list[dict[str, str | None]], state["rails"])
+                    rail_names = {
+                        n for rail in rails for n in (rail["v"], rail["i"]) if n
+                    }
+                    if rail_names and rail_names <= names:
+                        return {
+                            "mode": state["mode"],
+                            "rails": rails,
+                            "source": "reused",
+                        }
+                default_row = conn.execute(
+                    "SELECT value FROM settings WHERE key = 'power_mode'"
+                ).fetchone()
+                default = default_row["value"] if default_row else "battery"
+                if default not in _POWER_MODES:
+                    default = "battery"
+                return {"mode": default, "rails": [], "source": "default"}
+        finally:
+            conn.close()
+
+    def set_power(self, stem: str, state: dict[str, object]) -> dict[str, object]:
+        cleaned = self._clean_power(state)
+        conn = self._connect()
+        try:
+            with self._lock, conn:
+                conn.execute(
+                    "INSERT OR IGNORE INTO captures (stem, project) VALUES (?, NULL)", (stem,)
+                )
+                conn.execute(
+                    "INSERT INTO power_analysis (stem, json, saved_at) VALUES (?, ?, ?) "
+                    "ON CONFLICT(stem) DO UPDATE SET json = excluded.json, "
+                    "saved_at = excluded.saved_at",
+                    (
+                        stem,
+                        json.dumps(cleaned),
+                        datetime.now().isoformat(timespec="seconds"),
+                    ),
+                )
+        finally:
+            conn.close()
+        return cleaned
 
     # -- listing / scan ------------------------------------------------------
 

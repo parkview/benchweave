@@ -241,3 +241,91 @@ def test_annotations_pruned_when_capture_deleted(library: CaptureLibrary) -> Non
     library.scan()  # reconcile drops the capture row -> cascade deletes annotations
 
     assert library.get_annotations(STEM) == []
+
+
+def test_power_empty_by_default(library: CaptureLibrary) -> None:
+    assert library.get_power(STEM) == {"mode": "battery", "rails": [], "source": "default"}
+
+
+def test_power_roundtrip(library: CaptureLibrary) -> None:
+    state = {
+        "mode": "dc-dc",
+        "rails": [
+            {"v": "Voltage", "i": "Current"},
+            {"v": "Voltage", "i": "Current"},
+        ],
+    }
+    assert library.set_power(STEM, state) == state
+    assert library.get_power(STEM) == {**state, "source": "capture"}
+
+
+def test_power_clean_invalid(library: CaptureLibrary) -> None:
+    stored = library.set_power(
+        STEM,
+        {
+            "mode": "nonsense",
+            "rails": [
+                {"v": "Voltage", "i": "Current"},
+                "not-a-dict",
+                {"v": "Voltage", "i": "Current"},
+                {"v": "Voltage", "i": "Current"},
+            ],
+        },
+    )
+    assert stored["mode"] == "battery"  # invalid mode -> battery
+    assert stored["rails"] == [  # non-dict dropped, list truncated to 2
+        {"v": "Voltage", "i": "Current"},
+        {"v": "Voltage", "i": "Current"},
+    ]
+
+
+def test_power_reuse_by_matching_names(library: CaptureLibrary) -> None:
+    library.set_power(
+        STEM, {"mode": "load-step", "rails": [{"v": "Voltage", "i": "Current"}]}
+    )
+
+    stem2 = "adc_5678_test2_20260914_130000"
+    (library._captures_dir / f"{stem2}.csv").write_text(CSV)
+
+    got = library.get_power(stem2)
+    assert got == {
+        "mode": "load-step",
+        "rails": [{"v": "Voltage", "i": "Current"}],
+        "source": "reused",
+    }
+
+
+def test_power_reuse_skips_unmatched_names(library: CaptureLibrary) -> None:
+    library.set_power(
+        STEM, {"mode": "sleep", "rails": [{"v": "3V3", "i": "mA"}]}
+    )
+
+    stem2 = "adc_5678_test2_20260914_130000"
+    (library._captures_dir / f"{stem2}.csv").write_text(CSV)
+
+    got = library.get_power(stem2)
+    assert got == {"mode": "battery", "rails": [], "source": "default"}
+
+
+def test_power_default_mode(library: CaptureLibrary) -> None:
+    assert library.set_default_mode("sleep") == "sleep"
+    assert library.get_setting("power_mode") == "sleep"
+    assert library.get_power(STEM) == {"mode": "sleep", "rails": [], "source": "default"}
+
+
+def test_power_default_mode_invalid_falls_back(library: CaptureLibrary) -> None:
+    assert library.set_default_mode("nonsense") == "battery"
+    assert library.get_setting("power_mode") == "battery"
+
+
+def test_power_pruned_when_capture_deleted(library: CaptureLibrary) -> None:
+    library.set_power(
+        STEM, {"mode": "sleep", "rails": [{"v": "Voltage", "i": "Current"}]}
+    )
+    assert library.get_power(STEM)["source"] == "capture"
+
+    (library._captures_dir / f"{STEM}.csv").unlink()
+    (library._captures_dir / f"{STEM}.png").unlink()
+    library.scan()  # reconcile drops the capture row -> cascade deletes power_analysis
+
+    assert library.get_power(STEM) == {"mode": "battery", "rails": [], "source": "default"}

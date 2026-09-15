@@ -1061,7 +1061,7 @@ async function loadCapture(stem) {
     renderEdgeSelect();
     await loadAnnotations();
     renderAnalyseChart();
-    applyMode(powerMode);
+    await loadPowerState();
   } catch (e) {
     document.getElementById("analyse-status").textContent = "plot error: " + e.message;
   }
@@ -1475,6 +1475,7 @@ function railSelect(kind, r, idxs) {
     if (kind === "v") p.vIdx = val >= 0 ? val : -1;
     else p.iIdx = val >= 0 ? val : -1;
     updatePowerReadout();
+    savePowerState();
   });
   return sel;
 }
@@ -1509,6 +1510,85 @@ function applyMode(mode) {
   renderPowerRails();
   syncPowerControls();
   updatePowerReadout();
+}
+
+function indexOfName(name) {
+  if (name == null || name === "") return -1;
+  return analyseData.series.findIndex((s) => s.name === name);
+}
+
+function normalizeRailPairs() {
+  const count = powerMode === "dc-dc" ? 2 : 1;
+  while (railPairs.length < count) railPairs.push({ vIdx: -1, iIdx: -1 });
+  railPairs.length = count;
+  railPairs.forEach((p) => {
+    p.vIdx = p.vIdx >= 0 ? p.vIdx : -1;
+    p.iIdx = p.iIdx >= 0 ? p.iIdx : -1;
+  });
+}
+
+async function loadPowerState() {
+  let mode = "battery";
+  let rails = null;
+  try {
+    const res = await api(`/api/captures/${analyseCurrentStem}/power`);
+    mode = res.mode || "battery";
+    rails = res.rails || null;
+  } catch (e) {
+    mode = "battery";
+    rails = null;
+  }
+  powerMode = mode;
+  const count = mode === "dc-dc" ? 2 : 1;
+  let mapped = null;
+  if (rails && Array.isArray(rails)) {
+    mapped = rails.slice(0, count).map((rail) => ({
+      vIdx: indexOfName(rail && rail.v),
+      iIdx: indexOfName(rail && rail.i),
+    }));
+    if (mapped.every((p) => p.vIdx < 0 && p.iIdx < 0)) mapped = null;
+  }
+  railPairs = mapped || guessRailPairs(mode);
+  normalizeRailPairs();
+  document.getElementById("analyse-power-mode").value = powerMode;
+  renderPowerRails();
+  syncPowerControls();
+  updatePowerReadout();
+}
+
+async function savePowerState() {
+  if (!analyseCurrentStem) return;
+  const count = powerMode === "dc-dc" ? 2 : 1;
+  const rails = railPairs.slice(0, count).map((p) => ({
+    v: p.vIdx >= 0 ? analyseData.series[p.vIdx].name : null,
+    i: p.iIdx >= 0 ? analyseData.series[p.iIdx].name : null,
+  }));
+  try {
+    await api(`/api/captures/${analyseCurrentStem}/power`, {
+      method: "PUT",
+      body: JSON.stringify({ mode: powerMode, rails }),
+    });
+  } catch (e) {
+    document.getElementById("analyse-status").textContent =
+      "power save error: " + e.message;
+  }
+}
+
+async function setDefaultMode(mode) {
+  try {
+    await api(`/api/power/default`, {
+      method: "PUT",
+      body: JSON.stringify({ mode }),
+    });
+  } catch (e) {
+    // non-fatal — the default only affects captures without saved state
+  }
+}
+
+function onModeChange(mode) {
+  applyMode(mode);
+  savePowerState();
+  setDefaultMode(mode);
 }
 
 function batteryReadout(b) {
@@ -1938,7 +2018,7 @@ window.addEventListener("DOMContentLoaded", () => {
   });
   document.getElementById("analyse-power-capacity").addEventListener("input", updatePowerReadout);
   document.getElementById("analyse-power-capacity-unit").addEventListener("change", updatePowerReadout);
-  document.getElementById("analyse-power-mode").addEventListener("change", (ev) => applyMode(ev.target.value));
+  document.getElementById("analyse-power-mode").addEventListener("change", (ev) => onModeChange(ev.target.value));
   document.getElementById("analyse-power-threshold").addEventListener("input", updatePowerReadout);
   syncPowerControls();
   window.addEventListener("keydown", (ev) => {
