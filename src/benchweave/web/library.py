@@ -681,10 +681,14 @@ class CaptureLibrary:
             header = []
         channel_columns = header[5:] if len(header) > 5 else []
 
+        # Name each series by its CSV column (already deduplicated on write), so a
+        # capture whose profile reused a label still reads back with unique names.
+        # Units come from the metadata descriptors, positionally, since the header
+        # carries no units.
         names: list[str] = []
         units: list[str] = []
         for i in range(len(channel_columns)):
-            names.append(descs[i]["name"] if i < len(descs) else channel_columns[i])
+            names.append(channel_columns[i])
             units.append(descs[i]["unit"] if i < len(descs) else "")
 
         points: list[list[list[float | None]]] = [[] for _ in channel_columns]

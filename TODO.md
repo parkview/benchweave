@@ -112,13 +112,16 @@ LED is blinking.
 
 ## Fix duplicate channel names in the ADC config
 
-Logged 2026-09-14 · **not started**.
+Logged 2026-09-14 · ✅ **done 2026-09-15**.
 
-`plugins/adc_6ch_12bit/config.json` (both `default` and `test` profiles) names a
-raw channel and a computed channel the same, producing duplicate CSV column names:
-
-- raw channel `A2` → `"5V"` collides with computed `"5V"` (`A2*2`)
-- raw channel `A3` → `"EN-Pin"` collides with computed `"EN-Pin"` (`A3*2`)
-
-Rename one side (e.g. the raw channel to `5V-div` / `EN-div`, or the computed one
-to `5V-rail` / `EN-Pin-rail`).
+A raw channel and a computed channel could share a display label (e.g. `A2` →
+`"5V"` and a computed `"5V"` = `A2*2`), producing duplicate CSV column names.
+Rather than renaming project-specific labels, channel naming on output is now
+deduplicated structurally: `config.output_channels()` emits the active profile's
+visible channels in order and appends a qualifier to any duplicate display name —
+the firmware key for a physical channel (`5V (A2)`), `computed` for a computed
+one (`5V (computed)`), with a counter for further repeats. It is the single
+source of truth for output names, used by the CSV header (`_record_meta`), the
+capture summary, and `parse_csv` (series are now named by their CSV column), so
+a capture always round-trips with unique names regardless of the labels a
+project uses.

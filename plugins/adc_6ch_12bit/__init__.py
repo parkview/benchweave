@@ -6,6 +6,7 @@ from .config import (
     convert_channels,
     estimate_max_sps,
     load_config,
+    output_channels,
     save_config,
 )
 from .discovery import (
@@ -47,6 +48,7 @@ __all__ = [
     "discover_adc_boards",
     "estimate_max_sps",
     "load_config",
+    "output_channels",
     "save_config",
     "serial_for_device",
     "AVERAGING_CHOICES",

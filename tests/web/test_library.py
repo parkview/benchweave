@@ -92,6 +92,27 @@ def test_parse_csv_handles_duplicate_display_names(tmp_path: Path) -> None:
     assert data["series"][1]["points"] == [[0.0, 6.6]]
 
 
+def test_parse_csv_names_series_from_deduplicated_columns(tmp_path: Path) -> None:
+    # A capture written after the duplicate-name fix carries unique column names
+    # in the header, while the `#` metadata still records the raw labels. Series
+    # are named by the (unique) columns, not the metadata.
+    csv = (
+        "# profile: default\n"
+        "# A2: 5V (V)\n"
+        "# computed: 5V (V) = A2*2\n"
+        "timestamp,elapsed_s,actual_sps,counter,averaged_n,5V,5V (computed)\n"
+        "2026-09-14T12:00:00.000000,0.0,0.0,0,0,3.3,6.6\n"
+    )
+    (tmp_path / f"{STEM}.csv").write_text(csv)
+    lib = CaptureLibrary(captures_dir=tmp_path, db_path=tmp_path / "library.db")
+
+    path = lib.file_for(STEM, "csv")
+    assert path is not None
+    data = cast(dict[str, Any], lib.parse_csv(path))
+    assert [s["name"] for s in data["series"]] == ["5V", "5V (computed)"]
+    assert [s["unit"] for s in data["series"]] == ["V", "V"]
+
+
 def test_parse_csv_empty_file(tmp_path: Path) -> None:
     (tmp_path / f"{STEM}.csv").write_text("")
     lib = CaptureLibrary(captures_dir=tmp_path, db_path=tmp_path / "library.db")

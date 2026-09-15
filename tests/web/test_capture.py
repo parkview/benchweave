@@ -6,6 +6,7 @@ from unittest import mock
 import pytest
 
 from benchweave.web.board import BoardManager
+from plugins.adc_6ch_12bit import CHANNEL_KEYS
 from plugins.adc_6ch_12bit.driver import Sample
 from plugins.adc_6ch_12bit.protocol import IdentifyInfo
 
@@ -171,6 +172,39 @@ def test_capture_skips_failed_computed_channel(
     keys = {c["key"] for c in channels}
     assert "Bad" not in keys  # the failed computed channel is skipped, not summed
     assert keys  # physical channels still summarized
+
+
+def test_capture_deduplicates_colliding_column_names(
+    manager: BoardManager, tmp_path: Path
+) -> None:
+    # A raw channel and a computed channel share the display label "dup" — the
+    # fix must make the CSV columns (and the summary) unique without renaming the
+    # profile's labels.
+    profile = manager._config["profiles"]["default"]
+    profile["channels"] = {
+        key: {"name": key, "unit": "V", "gain": 0.001, "offset": 0.0, "show": True}
+        for key in CHANNEL_KEYS
+    }
+    profile["channels"]["A2"]["name"] = "dup"
+    profile["computed"] = [{"name": "dup", "unit": "V", "expr": "A2 * 2", "show": True}]
+    manager._config["active_profile"] = "default"
+
+    _driver_of(manager).samples = iter(_samples(2))
+    with mock.patch("benchweave.web.board.capture_dir", return_value=tmp_path):
+        result = manager.capture_samples(2)
+
+    path = Path(cast(str, result["path"]))
+    header = next(
+        line for line in path.read_text().splitlines() if not line.startswith("#")
+    )
+    columns = header.split(",")
+    assert "dup" in columns
+    assert "dup (computed)" in columns
+    assert len(columns) == len(set(columns))  # every column name unique
+
+    names = [c["name"] for c in cast(list[dict[str, object]], result["channels"])]
+    assert "dup (computed)" in names
+    assert len(names) == len(set(names))  # summary names unique too
 
 
 def test_sample_once_returns_converted_sample(manager: BoardManager) -> None:

@@ -99,6 +99,48 @@ def _eval(node: ast.AST, values: dict[str, float]) -> float:
     raise ValueError(f"unsupported expression: {ast.dump(node)}")
 
 
+def output_channels(config: dict[str, Any]) -> list[dict[str, str]]:
+    """Return the active profile's visible channels in output order, names deduplicated.
+
+    Physical channels come first (firmware ``CHANNEL_KEYS`` order), then computed
+    channels. Each entry maps ``key`` — the firmware key for a physical channel,
+    or an explicit ``key``/name for a computed one — to the channel's ``name`` and
+    ``unit``. Duplicate display names are made unique in place: the first
+    occurrence keeps its label verbatim and each later collision appends
+    `` (<qualifier>)`` — the firmware key for a physical channel, ``computed`` (or
+    an explicit key) for a computed one — with a counter if that too collides.
+    This keeps every output column name unique regardless of the labels a profile
+    uses, so it is the single source of truth for channel naming on output.
+    """
+    profile = config["profiles"][config["active_profile"]]
+    entries: list[tuple[str, str, str, str]] = []  # (key, name, unit, qualifier)
+    for key in CHANNEL_KEYS:
+        ch = profile["channels"][key]
+        if not ch.get("show", True):
+            continue
+        entries.append((key, str(ch["name"]), str(ch["unit"]), key))
+    for comp in profile.get("computed", []):
+        if not comp.get("show", True):
+            continue
+        key = str(comp.get("key", comp["name"]))
+        qualifier = str(comp.get("key", "computed"))
+        entries.append((key, str(comp["name"]), str(comp["unit"]), qualifier))
+
+    used: set[str] = set()
+    out: list[dict[str, str]] = []
+    for key, name, unit, qualifier in entries:
+        candidate = name
+        if candidate in used:
+            candidate = f"{name} ({qualifier})"
+            n = 2
+            while candidate in used:
+                candidate = f"{name} ({qualifier} {n})"
+                n += 1
+        used.add(candidate)
+        out.append({"key": key, "name": candidate, "unit": unit})
+    return out
+
+
 def convert_channels(sample: Sample, config: dict[str, Any]) -> list[dict[str, object]]:
     """Convert raw counts to engineering values (physical + computed) for the active profile."""
     profile = config["profiles"][config["active_profile"]]

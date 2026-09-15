@@ -27,6 +27,7 @@ from plugins.adc_6ch_12bit import (
     discover_adc_boards,
     estimate_max_sps,
     load_config,
+    output_channels,
     save_config,
     serial_for_device,
 )
@@ -216,7 +217,6 @@ class BoardManager:
     def _record_meta(self, note: str) -> tuple[list[str], list[str]]:
         profile_name = str(self._config["active_profile"])
         profile = self._config["profiles"][profile_name]
-        names: list[str] = []
         metadata = [f"profile: {profile_name}"]
         metadata.append(
             "config: "
@@ -238,13 +238,15 @@ class BoardManager:
             ch = profile["channels"][key]
             if not ch.get("show", True):
                 continue
-            names.append(str(ch["name"]))
             metadata.append(f"{key}: {ch['name']} ({ch['unit']})")
         for comp in profile.get("computed", []):
             if not comp.get("show", True):
                 continue
-            names.append(str(comp["name"]))
             metadata.append(f"computed: {comp['name']} ({comp['unit']}) = {comp['expr']}")
+        # Column names are deduplicated (not the metadata above), so a profile that
+        # reuses a label across a raw and a computed channel still yields a CSV with
+        # unique columns.
+        names = [c["name"] for c in output_channels(self._config)]
         return names, metadata
 
     def _record_interval(self) -> float:
@@ -322,6 +324,7 @@ class BoardManager:
                 target = None
 
             names, metadata = self._record_meta(note)
+            col_names = {c["key"]: c["name"] for c in output_channels(self._config)}
             path = capture_dir() / adc_capture_filename(self._serial, tag=tag)
             recorder = _Recorder(str(path), names, metadata)
             inbox: queue.Queue[Sample | None] = queue.Queue()
@@ -373,7 +376,7 @@ class BoardManager:
                             continue  # a computed channel that failed to evaluate
                         if key not in mins:
                             order.append(key)
-                            names_by_key[key] = str(c["name"])
+                            names_by_key[key] = col_names.get(key, str(c["name"]))
                             units_by_key[key] = str(c["unit"])
                             mins[key] = value
                             maxs[key] = value
