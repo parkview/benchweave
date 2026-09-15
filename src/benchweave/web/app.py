@@ -94,10 +94,16 @@ class PowerReportBody(BaseModel):
     hi: float | None = None
 
 
+class ZoomBody(BaseModel):
+    lo: float | None = None
+    hi: float | None = None
+
+
 class ReportBody(BaseModel):
     lo: float | None = None
     hi: float | None = None
     power: PowerReportBody | None = None
+    zoom: ZoomBody | None = None
 
 
 class PowerBody(BaseModel):
@@ -346,12 +352,18 @@ def generate_report(stem: str, body: ReportBody) -> dict[str, object]:
     lo, hi = body.lo, body.hi
     if lo is not None and hi is not None and lo > hi:
         lo, hi = hi, lo
+    zoom = None
+    if body.zoom is not None and body.zoom.lo is not None and body.zoom.hi is not None:
+        zoom = (
+            min(body.zoom.lo, body.zoom.hi),
+            max(body.zoom.lo, body.zoom.hi),
+        )
     assertions = cast(
         list[dict[str, Any]], library.check_assertions(stem)["results"]
     )
     html = build_report(
         data, markers, lo, hi, body.power.model_dump() if body.power else None,
-        assertions,
+        assertions, zoom,
     )
     out = csv.with_suffix(".html")
     out.write_text(html)

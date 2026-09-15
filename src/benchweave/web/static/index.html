@@ -33,6 +33,9 @@
     .file-list li.expired .fname { font-weight: 600; color: #b3261e; }
     .file-list select { font-size: 0.85rem; }
     #analyse-chart-box { height: 380px; position: relative; }
+    #analyse-zoom-box { margin-top: 0.75rem; }
+    #analyse-zoom-box h4 { margin: 0 0 0.25rem; font-weight: 600; }
+    #analyse-zoom-box .chart { height: 260px; position: relative; }
     #analyse-viewer { border-color: #ccc; }
     #analyse-integral { margin-left: 1rem; font-variant-numeric: tabular-nums; }
     #analyse-region-stats { margin-top: 0.75rem; }
@@ -215,10 +218,15 @@
           <select id="analyse-v-select"></select>
         </label>
         <button id="analyse-reset-zoom" title="Clear the zoom window and region selection">Reset zoom</button>
-        <span class="tip">Drag to measure · hold p to select the power region · scroll to zoom</span>
+        <span class="tip">Drag to measure · hold p to select the power region · hold z to select the zoom region · scroll to zoom</span>
         <span id="analyse-integral"></span>
       </div>
       <div id="analyse-chart-box"><canvas id="analyse-chart"></canvas></div>
+      <div id="analyse-zoom-box" hidden>
+        <h4>Zoom</h4>
+        <div class="chart"><canvas id="analyse-zoom-chart"></canvas></div>
+        <span class="tip">Hold <strong>z</strong> and drag on the graph above to pick the region shown here (purple); click with <strong>z</strong> to clear it.</span>
+      </div>
       <div id="analyse-annotate">
         <div>
           <span class="tip">Drag a letter onto the chart to mark a point in time · drag a marker to move it · click to select, then Delete to remove</span>

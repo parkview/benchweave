@@ -29,6 +29,11 @@ let pKeyHeld = false; // 'p' modifier: drag selects the power-analysis region
 let powerLo = null; // power-analysis region bounds (elapsed s)
 let powerHi = null;
 let powerDragging = false;
+let zKeyHeld = false; // 'z' modifier: drag selects the zoom region (expanded below)
+let zoomLo = null; // zoom region bounds (elapsed s)
+let zoomHi = null;
+let zoomDragging = false;
+let analyseZoomChart = null; // second chart showing only the zoom region
 let powerMode = "battery"; // analysis mode: battery | dc-dc | sleep | load-step
 let railPairs = []; // [{vIdx, iIdx}, ...] — paired voltage/current series indices
 let assertionSpec = []; // [{name, min, max}] — global per-channel min/max checks
@@ -109,6 +114,24 @@ const powerRegionPlugin = {
   },
 };
 
+const zoomRegionPlugin = {
+  id: "zoom-region",
+  afterDraw(chart) {
+    if (zoomLo === null || zoomHi === null) return;
+    const x = chart.scales.x;
+    const x1 = x.getPixelForValue(Math.min(zoomLo, zoomHi));
+    const x2 = x.getPixelForValue(Math.max(zoomLo, zoomHi));
+    const ctx = chart.ctx;
+    ctx.save();
+    ctx.fillStyle = "rgba(145, 30, 180, 0.14)";
+    ctx.fillRect(x1, chart.chartArea.top, x2 - x1, chart.chartArea.bottom - chart.chartArea.top);
+    ctx.strokeStyle = "rgba(145, 30, 180, 0.9)";
+    ctx.setLineDash([4, 3]);
+    ctx.strokeRect(x1, chart.chartArea.top, x2 - x1, chart.chartArea.bottom - chart.chartArea.top);
+    ctx.restore();
+  },
+};
+
 // -- Chart setup ------------------------------------------------------------
 
 function initChart() {
@@ -143,7 +166,7 @@ function initAnalyseChart() {
   analyseChart = new Chart(el, {
     type: "line",
     data: { datasets: [] },
-    plugins: [brushPlugin, markerPlugin, powerRegionPlugin],
+    plugins: [brushPlugin, markerPlugin, powerRegionPlugin, zoomRegionPlugin],
     options: {
       animation: false,
       maintainAspectRatio: false,
@@ -170,6 +193,67 @@ function initAnalyseChart() {
     },
   });
   attachAnalyseChartEvents(el);
+}
+
+function initAnalyseZoomChart() {
+  const el = document.getElementById("analyse-zoom-chart");
+  analyseZoomChart = new Chart(el, {
+    type: "line",
+    data: { datasets: [] },
+    plugins: [markerPlugin],
+    options: {
+      animation: false,
+      maintainAspectRatio: false,
+      interaction: { mode: "nearest", intersect: false },
+      parsing: false,
+      scales: {
+        x: {
+          type: "linear",
+          title: { display: true, text: "elapsed (s)" },
+        },
+        y: {
+          type: "linear",
+          beginAtZero: true,
+          title: { display: true, text: "voltage (V)" },
+        },
+        y2: {
+          type: "linear",
+          position: "right",
+          beginAtZero: true,
+          grid: { drawOnChartArea: false },
+          title: { display: true, text: "current (A)" },
+        },
+      },
+    },
+  });
+}
+
+function renderZoomChart() {
+  const box = document.getElementById("analyse-zoom-box");
+  if (!analyseZoomChart || !analyseData) return;
+  if (zoomLo === null || zoomHi === null) {
+    box.hidden = true;
+    return;
+  }
+  const series = analyseData.series;
+  analyseZoomChart.data.datasets = series.map((s, i) => {
+    const color = COLORS[i % COLORS.length];
+    const isA = (s.unit || "").toUpperCase() === "A";
+    return {
+      label: `${s.name} (${s.unit || ""})`,
+      data: s.points.map(([t, v]) => ({ x: t, y: v })),
+      borderColor: color,
+      backgroundColor: color,
+      borderWidth: 1,
+      pointRadius: 0,
+      yAxisID: isA ? "y2" : "y",
+    };
+  });
+  analyseZoomChart.options.scales.x.min = Math.min(zoomLo, zoomHi);
+  analyseZoomChart.options.scales.x.max = Math.max(zoomLo, zoomHi);
+  box.hidden = false;
+  analyseZoomChart.update();
+  analyseZoomChart.resize();
 }
 
 function attachAnalyseChartEvents(el) {
@@ -227,6 +311,15 @@ function attachAnalyseChartEvents(el) {
       analyseChart.update("none");
       return;
     }
+    if (zKeyHeld) {
+      zoomDragging = true;
+      zoomLo = analyseChart.scales.x.getValueForPixel(ev.offsetX);
+      zoomHi = zoomLo;
+      selectedMarker = null;
+      updateRemoveButton();
+      analyseChart.update("none");
+      return;
+    }
     brushDragging = true;
     brushStart = analyseChart.scales.x.getValueForPixel(ev.offsetX);
     brushEnd = brushStart;
@@ -256,6 +349,13 @@ function attachAnalyseChartEvents(el) {
       }
       return;
     }
+    if (zoomDragging) {
+      if (px >= analyseChart.chartArea.left && px <= analyseChart.chartArea.right) {
+        zoomHi = analyseChart.scales.x.getValueForPixel(px);
+        analyseChart.update("none");
+      }
+      return;
+    }
     if (!brushDragging) return;
     if (px < analyseChart.chartArea.left || px > analyseChart.chartArea.right) return;
     brushEnd = analyseChart.scales.x.getValueForPixel(px);
@@ -274,6 +374,14 @@ function attachAnalyseChartEvents(el) {
         powerLo = powerHi = null;
       }
       updatePowerReadout();
+      return;
+    }
+    if (zoomDragging) {
+      zoomDragging = false;
+      if (zoomLo !== null && Math.abs(zoomHi - zoomLo) < 1e-9) {
+        zoomLo = zoomHi = null;
+      }
+      renderZoomChart();
       return;
     }
     if (!brushDragging) return;
@@ -1045,6 +1153,7 @@ async function loadCapture(stem) {
     analyseZoom = { min: null, max: null };
     brushStart = brushEnd = null;
     powerLo = powerHi = null;
+    zoomLo = zoomHi = null;
     document.getElementById("analyse-viewer").hidden = false;
     document.getElementById("analyse-file-name").textContent = data.name;
     const metaBits = [];
@@ -1107,6 +1216,7 @@ function renderAnalyseChart() {
   else x.max = analyseZoom.max;
   analyseChart.update();
   analyseChart.resize();
+  renderZoomChart();
 }
 
 function currentSeriesIndex() {
@@ -1246,10 +1356,14 @@ async function generateReport() {
     lo: powerLo,
     hi: powerHi,
   };
+  const zoom =
+    zoomLo === null
+      ? null
+      : { lo: Math.min(zoomLo, zoomHi), hi: Math.max(zoomLo, zoomHi) };
   try {
     const res = await api(`/api/captures/${analyseCurrentStem}/report`, {
       method: "POST",
-      body: JSON.stringify({ lo, hi, power }),
+      body: JSON.stringify({ lo, hi, power, zoom }),
     });
     document.getElementById("analyse-annotate-status").textContent =
       "report generated: " + res.name;
@@ -2041,6 +2155,7 @@ function renderEdgeAnalysis(lo, hi) {
 function onResetZoom() {
   analyseZoom = { min: null, max: null };
   brushStart = brushEnd = null;
+  zoomLo = zoomHi = null;
   document.getElementById("analyse-integral").textContent = "";
   clearRegionStats();
   clearEdgeAnalysis();
@@ -2049,6 +2164,7 @@ function onResetZoom() {
     delete analyseChart.options.scales.x.max;
     analyseChart.update();
   }
+  renderZoomChart();
 }
 
 function onVoltageChange() {
@@ -2137,6 +2253,7 @@ async function onApplyConfig() {
 window.addEventListener("DOMContentLoaded", () => {
   initChart();
   initAnalyseChart();
+  initAnalyseZoomChart();
   loadConfig();
   buildChannelCheckboxes();
   document.getElementById("discover-btn").addEventListener("click", discover);
@@ -2204,6 +2321,12 @@ window.addEventListener("DOMContentLoaded", () => {
       if (analyseChart) analyseChart.canvas.style.cursor = "crosshair";
       return;
     }
+    if (ev.key === "z" || ev.key === "Z") {
+      if (typing) return;
+      zKeyHeld = true;
+      if (analyseChart) analyseChart.canvas.style.cursor = "crosshair";
+      return;
+    }
     if (typing) return;
     if ((ev.key === "Delete" || ev.key === "Backspace") && selectedMarker) {
       ev.preventDefault();
@@ -2213,6 +2336,10 @@ window.addEventListener("DOMContentLoaded", () => {
   window.addEventListener("keyup", (ev) => {
     if (ev.key === "p" || ev.key === "P") {
       pKeyHeld = false;
+      if (analyseChart) analyseChart.canvas.style.cursor = "";
+    }
+    if (ev.key === "z" || ev.key === "Z") {
+      zKeyHeld = false;
       if (analyseChart) analyseChart.canvas.style.cursor = "";
     }
   });

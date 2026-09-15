@@ -37,7 +37,10 @@ brush-region Ah/Wh readout. Roughly in value-per-effort order; pick individually
   with the active region shaded green — mirroring the live readout.
 - **Reporting & automation** — ✅ **done 2026-09-15**: self-contained HTML report
   export — inline SVG chart, A–Z letter markers (drag-from-palette) with notes,
-  and the brushed region's shaded selection + per-channel stats table.
+  and the brushed region's shaded selection + per-channel stats table. A purple
+  **zoom region** (hold `z` and drag) opens a second graph below the main one
+  showing just the selected span, and the report prints a matching zoomed
+  section, shipped 2026-09-15.
   Per-channel min/max assertion checks (mini pass/fail, evaluated over the full
   trace and matched by channel name, with a live checklist in the Analyse tab and
   a checks section in the report) shipped 2026-09-15. MCP capture tools

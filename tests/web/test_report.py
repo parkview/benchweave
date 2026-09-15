@@ -100,6 +100,26 @@ def test_build_report_power_shades_region() -> None:
     assert "region 500.00 ms → 2.000 s" in html
 
 
+def test_build_report_zoom_section_and_band() -> None:
+    html = build_report(DATA, [], None, None, zoom=(0.5, 2.0))
+    assert "rgba(145, 30, 180" in html  # purple zoom-region fill
+    assert "Zoom 500.00 ms → 2.000 s" in html
+    # the main chart plus a second zoomed chart
+    assert html.count("<svg") == 2
+
+
+def test_build_report_zoom_filters_markers_in_zoom_view() -> None:
+    markers = [
+        {"label": "A", "t": 0.5, "note": "inside"},
+        {"label": "B", "t": 2.5, "note": "outside"},
+    ]
+    html = build_report(DATA, markers, None, None, zoom=(0.0, 2.0))
+    # marker A falls inside the zoom window → drawn in both charts;
+    # marker B is outside → drawn in the main chart only.
+    assert html.count('class="marker">A</text>') == 2
+    assert html.count('class="marker">B</text>') == 1
+
+
 def test_build_report_assertions_checklist() -> None:
     assertions: list[dict[str, Any]] = [
         {

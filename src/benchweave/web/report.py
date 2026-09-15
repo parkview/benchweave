@@ -155,18 +155,19 @@ def _series_axis(series: list[Series]) -> tuple[list[int], list[int]]:
     return left, right
 
 
-def _path(points: Points, xmax: float, ylo: float, yhi: float) -> str:
+def _path(points: Points, xmin: float, xmax: float, ylo: float, yhi: float) -> str:
     plot_x = _M["left"]
     plot_w = WIDTH - _M["left"] - _M["right"]
     plot_y = _M["top"]
     plot_h = HEIGHT - _M["top"] - _M["bottom"]
+    xspan = xmax - xmin
     parts: list[str] = []
     pen_down = False
     for t, v in points:
-        if t is None or v is None:
+        if t is None or v is None or t < xmin or t > xmax:
             pen_down = False
             continue
-        px = plot_x + (t / xmax) * plot_w if xmax else plot_x
+        px = plot_x + ((t - xmin) / xspan) * plot_w if xspan else plot_x
         py = plot_y + (1.0 - (v - ylo) / (yhi - ylo)) * plot_h
         parts.append(f"{'L' if pen_down else 'M'}{px:.2f},{py:.2f}")
         pen_down = True
@@ -180,6 +181,7 @@ def build_report(
     hi: float | None,
     power: dict[str, Any] | None = None,
     assertions: list[dict[str, Any]] | None = None,
+    zoom: tuple[float, float] | None = None,
 ) -> str:
     """Return a complete HTML document for the capture."""
     name = str(data.get("name", "capture"))
@@ -190,10 +192,17 @@ def build_report(
 
     left_idx, right_idx = _series_axis(series)
 
-    def _yrange(idxs: list[int]) -> tuple[float, float]:
+    def _yrange(
+        idxs: list[int], lo: float | None = None, hi: float | None = None
+    ) -> tuple[float, float]:
         vals: list[float] = []
         for i in idxs:
-            vals.extend(v for _, v in _pts(series[i]) if v is not None)
+            for t, v in _pts(series[i]):
+                if v is None or t is None:
+                    continue
+                if lo is not None and hi is not None and not (lo <= t <= hi):
+                    continue
+                vals.append(v)
         if not vals:
             return 0.0, 1.0
         lo_v, hi_v = min(vals), max(vals)
@@ -203,10 +212,8 @@ def build_report(
             hi_v = lo_v + 1.0
         return lo_v, hi_v
 
-    y_left = _yrange(left_idx)
-    y_right = _yrange(right_idx)
-    y_left = _pad(y_left)
-    y_right = _pad(y_right)
+    y_left = _pad(_yrange(left_idx))
+    y_right = _pad(_yrange(right_idx))
 
     plo = phi = None
     if power:
@@ -216,10 +223,31 @@ def build_report(
             plo = min(float(cast(Any, raw_lo)), float(cast(Any, raw_hi)))
             phi = max(float(cast(Any, raw_lo)), float(cast(Any, raw_hi)))
 
+    zlo = zhi = None
+    if zoom:
+        zlo = min(float(cast(Any, zoom[0])), float(cast(Any, zoom[1])))
+        zhi = max(float(cast(Any, zoom[0])), float(cast(Any, zoom[1])))
+
     svg = _render_svg(
-        name, series, left_idx, right_idx, duration,
-        y_left, y_right, lo, hi, markers, plo, phi,
+        name, series, left_idx, right_idx, 0.0, duration,
+        y_left, y_right, lo, hi, markers, plo, phi, zlo, zhi,
     )
+
+    zoom_block = ""
+    if zlo is not None and zhi is not None:
+        zoom_markers = [
+            m for m in markers if zlo <= float(cast(Any, m.get("t", 0.0))) <= zhi
+        ]
+        zoom_svg = _render_svg(
+            f"{name} — zoom", series, left_idx, right_idx, zlo, zhi,
+            _pad(_yrange(left_idx, zlo, zhi)),
+            _pad(_yrange(right_idx, zlo, zhi)),
+            None, None, zoom_markers,
+        )
+        zoom_block = (
+            f'<section class="zoom"><h2>Zoom {_fmt_time(zlo)} → {_fmt_time(zhi)}</h2>'
+            f'{zoom_svg}</section>'
+        )
 
     notes_rows = ""
     for m in markers:
@@ -265,7 +293,7 @@ def build_report(
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
         f"<title>{_esc(name)}</title>\n<style>{_css()}</style>\n</head>\n<body>\n"
         f'<header><h1>{_esc(name)}</h1><p class="meta">{_esc(meta_line)}</p></header>\n'
-        f'<div class="chart">{svg}</div>\n{notes_block}{stats_block}'
+        f'<div class="chart">{svg}</div>\n{zoom_block}{notes_block}{stats_block}'
         f'{power_block}{assertions_block}\n'
         "</body>\n</html>\n"
     )
@@ -281,6 +309,7 @@ def _render_svg(
     series: list[Series],
     left_idx: list[int],
     right_idx: list[int],
+    xmin: float,
     xmax: float,
     y_left: tuple[float, float],
     y_right: tuple[float, float],
@@ -289,6 +318,8 @@ def _render_svg(
     markers: list[dict[str, Any]],
     plo: float | None = None,
     phi: float | None = None,
+    zlo: float | None = None,
+    zhi: float | None = None,
 ) -> str:
     plot_x = _M["left"]
     plot_y = _M["top"]
@@ -296,7 +327,8 @@ def _render_svg(
     plot_h = HEIGHT - _M["top"] - _M["bottom"]
 
     def px(t: float) -> float:
-        return plot_x + (t / xmax) * plot_w if xmax else plot_x
+        span = xmax - xmin
+        return plot_x + ((t - xmin) / span) * plot_w if span else plot_x
 
     def py(v: float, ylo: float, yhi: float) -> float:
         return plot_y + (1.0 - (v - ylo) / (yhi - ylo)) * plot_h
@@ -330,7 +362,7 @@ def _render_svg(
         )
 
     for k in range(6):
-        t = (k / 5) * xmax
+        t = xmin + (k / 5) * (xmax - xmin)
         gx = px(t)
         parts.append(
             f'<text x="{gx:.2f}" y="{plot_y + plot_h + 16}" text-anchor="middle" '
@@ -352,7 +384,7 @@ def _render_svg(
     )
 
     if lo is not None and hi is not None:
-        x1 = px(max(0.0, lo))
+        x1 = px(max(xmin, lo))
         x2 = px(min(xmax, hi))
         parts.append(
             f'<rect x="{x1:.2f}" y="{plot_y}" width="{x2 - x1:.2f}" height="{plot_h}" '
@@ -366,7 +398,7 @@ def _render_svg(
             )
 
     if plo is not None and phi is not None:
-        gx1 = px(max(0.0, plo))
+        gx1 = px(max(xmin, plo))
         gx2 = px(min(xmax, phi))
         parts.append(
             f'<rect x="{gx1:.2f}" y="{plot_y}" width="{gx2 - gx1:.2f}" height="{plot_h}" '
@@ -379,11 +411,25 @@ def _render_svg(
                 f'stroke-dasharray="4,3"/>'
             )
 
+    if zlo is not None and zhi is not None:
+        zx1 = px(max(xmin, zlo))
+        zx2 = px(min(xmax, zhi))
+        parts.append(
+            f'<rect x="{zx1:.2f}" y="{plot_y}" width="{zx2 - zx1:.2f}" height="{plot_h}" '
+            f'fill="rgba(145, 30, 180, 0.14)"/>'
+        )
+        for xx in (zx1, zx2):
+            parts.append(
+                f'<line x1="{xx:.2f}" y1="{plot_y}" x2="{xx:.2f}" '
+                f'y2="{plot_y + plot_h}" stroke="rgba(145, 30, 180, 0.9)" '
+                f'stroke-dasharray="4,3"/>'
+            )
+
     for i, s in enumerate(series):
         color = _COLORS[i % len(_COLORS)]
         ylo, yhi = y_right if i in right_idx else y_left
         parts.append(
-            f'<path d="{_path(_pts(s), xmax, ylo, yhi)}" fill="none" '
+            f'<path d="{_path(_pts(s), xmin, xmax, ylo, yhi)}" fill="none" '
             f'stroke="{color}" stroke-width="1.5"/>'
         )
 
@@ -771,7 +817,7 @@ header .meta { color: #666; margin: 0 0 1rem; }
 .axis { font: 11px system-ui, sans-serif; fill: #333; }
 .marker { font: bold 11px system-ui, sans-serif; fill: #ffffff; }
 section { margin: 1.25rem 0; }
-.notes h2, .region h2 { font-size: 1.05rem; margin: 0 0 0.5rem; }
+.notes h2, .region h2, .zoom h2 { font-size: 1.05rem; margin: 0 0 0.5rem; }
 .note { display: flex; align-items: baseline; gap: 0.6rem; padding: 0.25rem 0; }
 .badge {
   display: inline-flex; align-items: center; justify-content: center;
