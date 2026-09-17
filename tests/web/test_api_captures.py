@@ -98,8 +98,9 @@ def test_capture_data_decimates_to_max_points(client: TestClient, captures_dir: 
     assert response.status_code == 200
     series = response.json()["series"]
     assert [s["name"] for s in series] == ["Voltage"]
-    # One decimated point survives, plus the preserved endpoint.
-    assert series[0]["points"] == [[0.0, 1.0], [11.0, 2.1]]
+    # The budget is a hard cap: at max_points=1 only the final point survives
+    # (the endpoint replaces the last stride sample instead of appending).
+    assert series[0]["points"] == [[11.0, 2.1]]
 
 
 def test_capture_data_unknown_stem_is_404(client: TestClient) -> None:
