@@ -173,9 +173,10 @@ def load_capture(stem: str) -> dict[str, object]:
 
 @mcp.tool()
 def capture_series(stem: str, name: str, max_points: int = 2000) -> dict[str, object]:
-    """Return one channel's full time series from a capture, matched by channel name.
+    """Return one channel's time series from a capture, matched by channel name.
 
-    ``max_points`` evenly decimates a long trace (0 = return every point)."""
+    Long traces are evenly decimated to ``max_points`` (default 2000); pass 0
+    to return every point."""
     csv = library.file_for(stem, "csv")
     if csv is None:
         raise ValueError(f"no CSV for capture '{stem}'")

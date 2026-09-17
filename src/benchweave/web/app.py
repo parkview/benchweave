@@ -15,6 +15,8 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.datastructures import Headers
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from benchweave.web.board import BoardManager
 from benchweave.web.library import CaptureLibrary
@@ -41,12 +43,73 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(title="BenchWeave ADC", lifespan=lifespan)
 
 
-@app.middleware("http")
-async def _limit_body(request: Request, call_next):  # type: ignore[no-untyped-def]
-    length = request.headers.get("content-length")
-    if length and length.isdigit() and int(length) > MAX_BODY_BYTES:
-        return JSONResponse({"detail": "request body too large"}, status_code=413)
-    return await call_next(request)
+class _BodyTooLarge(HTTPException):
+    """Raised from the metered receive channel once a body outgrows the cap."""
+
+    def __init__(self) -> None:
+        super().__init__(status_code=413, detail="request body too large")
+
+
+class BodyLimitMiddleware:
+    """Reject request bodies over ``MAX_BODY_BYTES``, however they are framed.
+
+    A numeric ``Content-Length`` over the cap is rejected up front with 413 and
+    ``Transfer-Encoding: chunked`` is refused with 411 (uvicorn/h11 never
+    delivers more bytes than a declared length, so those two checks already
+    bound every HTTP/1.1 body). As a server-agnostic backstop the receive
+    channel is also metered, so a body that outgrows the cap mid-stream is cut
+    off with a 413 no matter how the server framed it.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        headers = Headers(scope=scope)
+        if "chunked" in headers.get("transfer-encoding", "").lower():
+            response = JSONResponse({"detail": "length required"}, status_code=411)
+            await response(scope, receive, send)
+            return
+        length = headers.get("content-length", "")
+        if length.isdigit() and int(length) > MAX_BODY_BYTES:
+            response = JSONResponse({"detail": "request body too large"}, status_code=413)
+            await response(scope, receive, send)
+            return
+
+        received = 0
+        response_started = False
+
+        async def metered_receive() -> Message:
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > MAX_BODY_BYTES:
+                    raise _BodyTooLarge()
+            return message
+
+        async def tracking_send(message: Message) -> None:
+            nonlocal response_started
+            if message["type"] == "http.response.start":
+                response_started = True
+            await send(message)
+
+        try:
+            await self.app(scope, metered_receive, tracking_send)
+        except _BodyTooLarge:
+            # FastAPI routes re-raise HTTPException from their body read, so
+            # the router already answered with 413; this backstop covers body
+            # reads outside the router.
+            if response_started:
+                raise
+            response = JSONResponse({"detail": "request body too large"}, status_code=413)
+            await response(scope, receive, send)
+
+
+app.add_middleware(BodyLimitMiddleware)
 
 
 class ConnectBody(BaseModel):
@@ -305,13 +368,17 @@ def capture_data(stem: str, max_points: int = MAX_DATA_POINTS) -> dict[str, obje
 
 
 def _decimate(points: list[Any], limit: int) -> list[Any]:
-    """Every n-th point so at most ``limit`` survive; endpoints preserved."""
+    """Every n-th point so at most ``limit`` survive; the final point replaces
+    the last stride sample when the budget is full."""
     if len(points) <= limit:
         return points
     step = (len(points) + limit - 1) // limit
     sampled = points[::step]
     if sampled[-1] is not points[-1]:
-        sampled.append(points[-1])
+        if len(sampled) >= limit:
+            sampled[-1] = points[-1]
+        else:
+            sampled.append(points[-1])
     return sampled
 
 
