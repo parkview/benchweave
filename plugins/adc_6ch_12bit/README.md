@@ -1,6 +1,7 @@
 # ADC 6-channel 12-bit board
 
-Python master driver for the BenchWeave 6-channel, 12-bit ADC board.
+BenchWeave plugin for the 6-channel, 12-bit ADC board: an OTDP descriptor and
+async SDK adapter over a custom binary UART protocol.
 
 ## Hardware
 
@@ -63,24 +64,31 @@ Python-side recording is not the bottleneck: the CSV writer benchmarks at
 ~230,000 rows/s (4.3 µs/row), so even the ~8,700 frames/s UART ceiling uses only
 ~4% of the write budget — the ADC (~3,300 SPS) is the limiter, not the recorder.
 At very high rates (>~20K SPS) the per-sample `call_soon_threadsafe` used to feed
-the SSE display would start to matter; downsample in the worker thread instead.
+the SSE display would start to matter; downsample in the host-loop pump instead.
 
 ## Usage
 
-```python
-from plugins.adc_6ch_12bit import AdcDriver, discover_adc_boards
+The supported host-side surface is `benchweave.web.board.BoardManager`, which
+drives the plugin's SDK adapter (`adapter.py` + `descriptor.json`) on a
+dedicated event loop:
 
-boards = discover_adc_boards()  # probe serial ports with IDENTIFY
-driver = AdcDriver()
-driver.open(boards[0].device)  # 2 Mbps
-info = driver.identify()  # proto, firmware, channels, resolution
-driver.set_averaging(16)
-driver.start_stream()
-for sample in driver.iter_samples():
-    print(sample.counter, sample.channels)
-driver.stop_stream()
-driver.close()
+```python
+from benchweave.web.board import BoardManager
+from plugins.adc_6ch_12bit import discover_adc_boards
+
+boards = discover_adc_boards()        # probe serial ports with IDENTIFY
+manager = BoardManager()
+manager.connect(boards[0].device)     # open + identify + restore channels
+manager.set_averaging(16)
+print(manager.capture_seconds(5.0))   # CSV + per-channel summary
+manager.disconnect()
 ```
+
+Direct adapter use (async, one session per connection) follows the
+benchweave-sdk contract: `create_plugin()`, `open(descriptor, services, ctx)`,
+`execute` with `identify`/`reset`/`invoke` (`otdp.daq.*` actions), and
+`next_event` for streamed samples. `benchweave.web.host` provides the matching
+host services over a serial port.
 
 `discover_adc_boards()` enumerates WCH USB-UART ports and probes each with
 `IDENTIFY`, accepting only ports that reply with the ADC signature — so the
@@ -133,13 +141,18 @@ Build from the CLI with `make` (uses the MRS-bundled `riscv-wch-elf-gcc` toolcha
 Context for a fresh AI session continuing work on this module. Read this, then
 the linked spec, before changing anything.
 
-**What this is:** a Python master driver for a 6-channel, 12-bit ADC board
+**What this is:** an OTDP adapter plugin for a 6-channel, 12-bit ADC board
 (WCH CH32V006E8R + CH343G USB-UART) speaking a custom binary protocol over UART
 at 2 Mbps. Host is the master: it sends commands, the board replies or streams.
 
 **Layout:**
-- `plugins/adc_6ch_12bit/` — this plugin (`protocol.py` codec, `driver.py`,
+- `plugins/adc_6ch_12bit/` — this plugin (`protocol.py` codec — including the
+  parsed `Sample` vocabulary — `adapter.py` + `descriptor.json` SDK adapter,
   `discovery.py`).
+- `src/benchweave/web/host.py` — host half of the SDK contract (SerialLink,
+  operation contexts, transfer + capture-artifact services).
+- `src/benchweave/web/board.py` — BoardManager: the sync facade that runs the
+  adapter on a dedicated host event loop.
 - `firmware/ch32v006e8r_adc/` — matching CH32V006 firmware (C; `make`).
 - `src/benchweave/web/` — FastAPI frontend (REST + SSE + live graph).
 - `scripts/adc_capture.py` / `scripts/run_adc_web.sh` — CLI capture / web launcher.
