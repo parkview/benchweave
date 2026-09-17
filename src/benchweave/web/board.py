@@ -356,9 +356,11 @@ class BoardManager:
     # -- lifecycle -----------------------------------------------------------
 
     def set_loop(self, loop: asyncio.AbstractEventLoop) -> None:
+        """Bind the WEB app's event loop, where SSE subscriber queues live."""
         self._loop = loop
 
     def discover(self) -> list[dict[str, object]]:
+        """Probe candidate serial ports with IDENTIFY and describe each board found."""
         # Under the lock: probing candidate ports while a capture is running
         # would disturb the active serial connection.
         with self._lock:
@@ -377,6 +379,9 @@ class BoardManager:
         ]
 
     def connect(self, device: str) -> dict[str, object]:
+        """Open a session on ``device``: close any existing one, open the
+        adapter over a fresh serial link, identify the firmware, and restore
+        the persisted channel selection. Returns the new status."""
         with self._lock:
             self._close_locked()
             transport = _open_transport(device)
@@ -408,6 +413,7 @@ class BoardManager:
         return self.status()
 
     def disconnect(self) -> None:
+        """Stop any stream and close the adapter session (idempotent)."""
         with self._lock:
             self._close_locked()
 
@@ -437,6 +443,9 @@ class BoardManager:
         self._fw_minor = None
 
     def status(self) -> dict[str, object]:
+        """Snapshot of connection, firmware, averaging, channel mask, stream
+        and recording state, the last stream error, and the estimated max
+        sample rate."""
         return {
             "connected": self._device is not None,
             "device": self._device,
@@ -457,9 +466,14 @@ class BoardManager:
     # -- config --------------------------------------------------------------
 
     def get_config(self) -> dict[str, Any]:
+        """The current runtime configuration (profiles plus settings)."""
         return self._config
 
     def set_config(self, config: dict[str, Any]) -> dict[str, Any]:
+        """Validate, adopt, and persist a new runtime configuration.
+
+        Raises ``ValueError`` (via :func:`_validate_config`) for a config
+        that would later break recording or conversion."""
         _validate_config(config)
         self._config = config
         save_config(config)
@@ -483,6 +497,8 @@ class BoardManager:
         return {"path": target}
 
     def convert_sample(self, sample: Sample) -> list[dict[str, object]]:
+        """Convert one raw sample to engineering units per the active profile
+        (gain/offset per channel, plus computed channels)."""
         return convert_channels(sample, self._config)
 
     def _record_meta(self, note: str) -> tuple[list[str], list[str]]:
@@ -785,6 +801,8 @@ class BoardManager:
     # -- control -------------------------------------------------------------
 
     def set_averaging(self, n: int) -> dict[str, object]:
+        """Set the hardware averaging depth (one of ``AVERAGING_CHOICES``)
+        via a reconfigure; requires a connected, non-streaming board."""
         with self._lock:
             self._require_idle()
             if n not in AVERAGING_CHOICES:
@@ -794,6 +812,8 @@ class BoardManager:
         return self.status()
 
     def set_channels(self, mask: int) -> dict[str, object]:
+        """Set the enabled-channel bitmask (0..63) via a reconfigure and
+        persist it in the config; requires a connected, non-streaming board."""
         with self._lock:
             self._require_idle()
             if not 0 <= mask <= CHANNEL_MASK_ALL:
@@ -805,6 +825,10 @@ class BoardManager:
         return self.status()
 
     def start_stream(self, record: bool = False, note: str = "") -> dict[str, object]:
+        """Start the live stream (no-op when already streaming): arm an
+        open-ended acquisition and launch the sample pump. With ``record`` a
+        CSV recorder is opened in the captures directory, ``note`` embedded
+        in its metadata header."""
         with self._lock:
             self._require_connected()
             if not self._streaming:
@@ -838,6 +862,8 @@ class BoardManager:
         return self.status()
 
     def stop_stream(self) -> dict[str, object]:
+        """Stop the live stream, abort the acquisition, and close any open
+        CSV recorder (idempotent)."""
         with self._lock:
             self._stop_stream_locked()
         return self.status()
@@ -990,6 +1016,10 @@ class BoardManager:
     # -- live stream fan-out -------------------------------------------------
 
     def subscribe(self) -> asyncio.Queue[Sample]:
+        """Register a live-sample queue (for one SSE client) and return it.
+
+        Raises ``RuntimeError`` once :data:`MAX_SUBSCRIBERS` queues exist. A
+        full queue drops new samples rather than blocking the pump."""
         if len(self._subscribers) >= MAX_SUBSCRIBERS:
             raise RuntimeError("too many live-stream subscribers")
         queue: asyncio.Queue[Sample] = asyncio.Queue(maxsize=2000)
@@ -997,6 +1027,7 @@ class BoardManager:
         return queue
 
     def unsubscribe(self, queue: asyncio.Queue[Sample]) -> None:
+        """Drop a subscriber queue registered by :meth:`subscribe`."""
         self._subscribers.discard(queue)
 
     def _publish(self, sample: Sample) -> None:

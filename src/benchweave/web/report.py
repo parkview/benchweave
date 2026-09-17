@@ -184,7 +184,14 @@ def build_report(
     assertions: list[dict[str, Any]] | None = None,
     zoom: tuple[float, float] | None = None,
 ) -> str:
-    """Return a complete HTML document for the capture."""
+    """Return a complete, self-contained HTML document for the capture.
+
+    ``data`` is ``CaptureLibrary.parse_csv`` output; ``markers`` the A-Z
+    letter annotations. ``lo``/``hi`` bound the selected region (adds shading
+    and the statistics table), ``power`` is a power-analysis request (mode,
+    rails, optional region/capacity/threshold), ``assertions`` the evaluated
+    check results, and ``zoom`` appends a second chart over that time span.
+    """
     name = str(data.get("name", "capture"))
     meta = cast(dict[str, Any], data.get("meta") or {})
     series = cast(list[Series], data.get("series") or [])
