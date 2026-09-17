@@ -10,12 +10,12 @@ from collections.abc import Callable, MutableMapping
 from typing import Any
 
 import pytest
-from fakes import FakeBoardManager
 from fastapi.testclient import TestClient
 from starlette.types import ASGIApp
 
 from plugins.adc_6ch_12bit.config import DEFAULT_CONFIG
-from plugins.adc_6ch_12bit.driver import Sample
+from plugins.adc_6ch_12bit.protocol import Sample
+from tests.web.fakes import FakeBoardManager
 
 PNG_BYTES = b"\x89PNG\r\n\x1a\nfake-image-data"
 

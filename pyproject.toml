@@ -51,7 +51,12 @@ dev = [
 # The PyPI 0.0.2 wheel predates the standards renumbering (it vendors
 # otdp-v0.3.0; the daq profile lives in the renumbered otdp/0.1.0 corpus).
 # Track upstream main until the next SDK release, then pin ">=0.0.3".
-benchweave-sdk = { path = "../benchweave-sdk" }  # TEMP-LOCAL: swap to git/PyPI before PR
+# The PyPI 0.0.2 wheel predates the standards renumbering (it vendors
+# otdp-v0.3.0; the daq profile lives in the renumbered otdp/0.1.0 corpus),
+# and installing upstream from git fails on Windows until the .gitattributes
+# fix merges (madeinoz67/benchweave-sdk#9). Until an SDK 0.0.3 release, pin
+# the fork branch carrying those fixes; then switch to 'benchweave-sdk>=0.0.3'.
+benchweave-sdk = { git = "https://github.com/platima/benchweave-sdk", branch = "fix/portability-and-correctness" }
 
 [project.scripts]
 benchweave-adc = "benchweave.__main__:main"

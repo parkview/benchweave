@@ -145,7 +145,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "benchweave-sdk", directory = "../benchweave-sdk" },
+    { name = "benchweave-sdk", git = "https://github.com/platima/benchweave-sdk?branch=fix%2Fportability-and-correctness" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "mypy", specifier = ">=1.11" },
     { name = "pytest", specifier = ">=8.0" },
@@ -157,7 +157,7 @@ dev = [
 [[package]]
 name = "benchweave-sdk"
 version = "0.0.2"
-source = { directory = "../benchweave-sdk" }
+source = { git = "https://github.com/platima/benchweave-sdk?branch=fix%2Fportability-and-correctness#a1e7562f95d8124cfa0bf049d9c8c4e350fb9f90" }
 dependencies = [
     { name = "click" },
     { name = "jsonschema" },
@@ -166,26 +166,6 @@ dependencies = [
     { name = "rfc3987" },
     { name = "rich" },
     { name = "textual" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "click", specifier = ">=8.3,<9" },
-    { name = "jsonschema", specifier = ">=4.23" },
-    { name = "pytest", marker = "extra == 'test'", specifier = ">=8.0" },
-    { name = "referencing", specifier = ">=0.35" },
-    { name = "rfc3339-validator", specifier = ">=0.1.4" },
-    { name = "rfc3987", specifier = ">=1.3.8" },
-    { name = "rich", specifier = ">=14,<15" },
-    { name = "textual", specifier = ">=8.2,<9" },
-]
-provides-extras = ["test"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "mypy", specifier = ">=1.11" },
-    { name = "ruff", specifier = ">=0.6" },
-    { name = "types-jsonschema", specifier = ">=4.26.0.20260518" },
 ]
 
 [[package]]

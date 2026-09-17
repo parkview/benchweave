@@ -10,11 +10,11 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from fakes import CSV, STEM, FakeBoardManager
 from fastapi.testclient import TestClient
 
 from benchweave.web.library import CaptureLibrary
 from plugins.adc_6ch_12bit.config import DEFAULT_CONFIG
+from tests.web.fakes import CSV, STEM, FakeBoardManager
 
 UNKNOWN_STEM = "adc_none_20260101_000000"
 HOSTILE = '" onmouseover="alert(1)'

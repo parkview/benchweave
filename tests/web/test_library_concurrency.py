@@ -6,9 +6,9 @@ import threading
 from pathlib import Path
 
 import pytest
-from fakes import CSV, STEM
 
 from benchweave.web.library import CaptureLibrary
+from tests.web.fakes import CSV, STEM
 
 ITERATIONS = 100
 
