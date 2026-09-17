@@ -2,16 +2,16 @@
 # Kick off the BenchWeave ADC web frontend (config/control + live graph).
 #
 # Usage:
-#   ./scripts/run_adc_web.sh                # listens on 0.0.0.0:8000
+#   ./scripts/run_adc_web.sh                # listens on 127.0.0.1:8000
 #   BENCHWEAVE_PORT=8080 ./scripts/run_adc_web.sh
-#   BENCHWEAVE_HOST=127.0.0.1 ./scripts/run_adc_web.sh
+#   BENCHWEAVE_HOST=0.0.0.0 ./scripts/run_adc_web.sh
 set -euo pipefail
 
 # Resolve the repository root (this script lives in scripts/).
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
-HOST="${BENCHWEAVE_HOST:-0.0.0.0}"
+HOST="${BENCHWEAVE_HOST:-127.0.0.1}"
 PORT="${BENCHWEAVE_PORT:-8000}"
 
 echo "BenchWeave ADC web frontend"
