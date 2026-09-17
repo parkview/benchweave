@@ -3,20 +3,21 @@ requires = ["hatchling>=1.26"]
 build-backend = "hatchling.build"
 
 [project]
-name = "benchweave"
+name = "benchweave-adc"
 version = "0.1.0"
-description = "Local test-bench gateway for reusable instrument and DUT plugins."
-readme = "docs/project-index.md"
+description = "Capture and analysis gateway for the 6-channel 12-bit ADC board: web UI, MCP server, capture library."
+readme = "README.md"
 requires-python = ">=3.13"
-license = { text = "Proprietary" }
+license = { text = "MIT" }
 authors = [
   { name = "Stephen Eaton" }
 ]
 keywords = [
-  "test automation",
+  "adc",
+  "data-acquisition",
   "embedded systems",
   "instrumentation",
-  "hardware-in-the-loop"
+  "serial"
 ]
 classifiers = [
   "Development Status :: 2 - Pre-Alpha",
@@ -36,14 +37,12 @@ dev = [
   "pytest>=8.0",
   "ruff>=0.6",
   "mypy>=1.11",
-  "jsonschema>=4.23",
-  "referencing>=0.35",
   "pytest-timeout>=2.3",
 ]
 
 [project.scripts]
-benchweave = "benchweave.__main__:main"
-benchweave-mcp = "benchweave.mcp_server:main"
+benchweave-adc = "benchweave.__main__:main"
+benchweave-adc-mcp = "benchweave.mcp_server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/benchweave", "plugins"]
