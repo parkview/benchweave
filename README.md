@@ -60,6 +60,10 @@ by default; exposing it more widely is at your own risk.
 | Topic | Where |
 |---|---|
 | Analyse tab guide | [docs/analyse-page.md](docs/analyse-page.md) |
+| REST API reference | [docs/rest-api.md](docs/rest-api.md) (live version at `/docs`) |
+| MCP tools | [docs/mcp-tools.md](docs/mcp-tools.md) |
+| Capture library schema | [docs/library-schema.md](docs/library-schema.md) |
+| SDK adapter | [docs/adapter.md](docs/adapter.md) |
 | Hardware + wire protocol | [plugins/adc_6ch_12bit/README.md](plugins/adc_6ch_12bit/README.md) |
 | Firmware | [firmware/ch32v006e8r_adc/](firmware/ch32v006e8r_adc/) |
 | Development & CI | [docs/development.md](docs/development.md) |

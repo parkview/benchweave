@@ -77,4 +77,10 @@ ones are reconstructed from the `#` header lines.)
 - Captures: `plugins/adc_6ch_12bit/captures/` (CSV, PNG, HTML; gitignored).
 - Project and retention metadata: `plugins/adc_6ch_12bit/library.db` (SQLite;
   gitignored). The filesystem stays the source of truth — the database only
-  overlays project assignment and retention.
+  overlays project assignment and retention. The full schema story is in
+  [library-schema.md](library-schema.md).
+
+Everything this page does goes through the HTTP API — see
+[rest-api.md](rest-api.md), or `/docs` on a running server. The same
+captures are reachable from an agent session via the
+[MCP tools](mcp-tools.md).
