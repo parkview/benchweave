@@ -150,9 +150,7 @@ def test_trash_moves_files_and_drops_rows(library: CaptureLibrary) -> None:
     def fake_send2trash(path: str) -> None:
         Path(path).unlink()
 
-    with mock.patch(
-        "benchweave.web.library.send2trash", side_effect=fake_send2trash
-    ) as sender:
+    with mock.patch("benchweave.web.library.send2trash", side_effect=fake_send2trash) as sender:
         result = cast(dict[str, Any], library.trash([STEM]))
 
     assert result["errors"] == []
@@ -166,9 +164,7 @@ def test_trash_moves_files_and_drops_rows(library: CaptureLibrary) -> None:
 
 
 def test_trash_failure_reports_error_and_keeps_metadata(library: CaptureLibrary) -> None:
-    with mock.patch(
-        "benchweave.web.library.send2trash", side_effect=OSError("no trash here")
-    ):
+    with mock.patch("benchweave.web.library.send2trash", side_effect=OSError("no trash here")):
         result = cast(dict[str, Any], library.trash([STEM]))
 
     assert result["trashed"] == []
@@ -316,9 +312,7 @@ def test_power_clean_invalid(library: CaptureLibrary) -> None:
 
 
 def test_power_reuse_by_matching_names(library: CaptureLibrary) -> None:
-    library.set_power(
-        STEM, {"mode": "load-step", "rails": [{"v": "Voltage", "i": "Current"}]}
-    )
+    library.set_power(STEM, {"mode": "load-step", "rails": [{"v": "Voltage", "i": "Current"}]})
 
     stem2 = "adc_5678_test2_20260914_130000"
     (library._captures_dir / f"{stem2}.csv").write_text(CSV)
@@ -332,9 +326,7 @@ def test_power_reuse_by_matching_names(library: CaptureLibrary) -> None:
 
 
 def test_power_reuse_skips_unmatched_names(library: CaptureLibrary) -> None:
-    library.set_power(
-        STEM, {"mode": "sleep", "rails": [{"v": "3V3", "i": "mA"}]}
-    )
+    library.set_power(STEM, {"mode": "sleep", "rails": [{"v": "3V3", "i": "mA"}]})
 
     stem2 = "adc_5678_test2_20260914_130000"
     (library._captures_dir / f"{stem2}.csv").write_text(CSV)
@@ -355,9 +347,7 @@ def test_power_default_mode_invalid_falls_back(library: CaptureLibrary) -> None:
 
 
 def test_power_survives_missing_files_and_dies_on_trash(library: CaptureLibrary) -> None:
-    library.set_power(
-        STEM, {"mode": "sleep", "rails": [{"v": "Voltage", "i": "Current"}]}
-    )
+    library.set_power(STEM, {"mode": "sleep", "rails": [{"v": "Voltage", "i": "Current"}]})
     assert library.get_power(STEM)["source"] == "capture"
 
     # Files vanishing from disk (unmounted drive, sync client mid-flight) only

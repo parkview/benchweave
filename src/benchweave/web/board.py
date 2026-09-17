@@ -633,9 +633,7 @@ def _validate_config(config: dict[str, Any]) -> None:
             channel = channels.get(key)
             if not isinstance(channel, dict):
                 raise ValueError(f"profile '{profile_name}' is missing channel '{key}'")
-            if not isinstance(channel.get("name"), str) or not isinstance(
-                channel.get("unit"), str
-            ):
+            if not isinstance(channel.get("name"), str) or not isinstance(channel.get("unit"), str):
                 raise ValueError(f"channel '{key}' needs string 'name' and 'unit'")
             for field in ("gain", "offset"):
                 value = channel.get(field)
@@ -657,9 +655,7 @@ def _validate_config(config: dict[str, Any]) -> None:
             except ZeroDivisionError:
                 pass  # structurally valid; zeros in the probe divided
             except (ValueError, SyntaxError) as exc:
-                raise ValueError(
-                    f"computed channel '{comp['name']}': invalid expression"
-                ) from exc
+                raise ValueError(f"computed channel '{comp['name']}': invalid expression") from exc
     settings = config.get("settings", {})
     if not isinstance(settings, dict):
         raise ValueError("'settings' must be an object")
