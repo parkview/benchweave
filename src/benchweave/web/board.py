@@ -812,7 +812,7 @@ class BoardManager:
         return self.status()
 
     def set_channels(self, mask: int) -> dict[str, object]:
-        """Set the enabled-channel bitmask (0..63) via a reconfigure and
+        """Set the enabled-channel bitmask (1..63) via a reconfigure and
         persist it in the config; requires a connected, non-streaming board."""
         with self._lock:
             self._require_idle()

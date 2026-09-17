@@ -81,7 +81,7 @@ def set_averaging(n: int) -> dict[str, object]:
 
 @mcp.tool()
 def set_channels(mask: int) -> dict[str, object]:
-    """Set the enabled-channel bitmask, 0..63 (bit 0 = A0 ... bit 5 = A7);
+    """Set the enabled-channel bitmask, 1..63 (bits 0-4 = A0-A4, bit 5 = A7);
     the selection is persisted. Requires a connected board that is not
     streaming."""
     return manager.set_channels(mask)

@@ -7,7 +7,8 @@ also there, generated from the handlers' docstrings.
 
 Global behaviour: requests are unauthenticated (single operator on
 localhost — see the README's security posture), and any request body over
-20 MiB is rejected with **413**. `{stem}` is a capture's filename stem, e.g.
+20 MiB is rejected with **413** (chunked uploads with no declared length are
+rejected with **411**). `{stem}` is a capture's filename stem, e.g.
 `adc_1234_20260917_101500`. The static UI is mounted at `/`.
 
 ## Board and configuration
@@ -20,7 +21,7 @@ localhost — see the README's security posture), and any request body over
 | GET | `/api/config` | Full runtime config (profiles + settings) | |
 | PUT | `/api/config` | Replace and persist the config (validated) | 422 invalid config |
 | POST | `/api/averaging` | Set hardware averaging depth | 422 unsupported value, 400 not idle |
-| POST | `/api/channels` | Set enabled-channel bitmask, persisted | 422 outside 0..63, 400 not idle |
+| POST | `/api/channels` | Set enabled-channel bitmask, persisted | 422 outside 1..63, 400 not idle |
 
 ## Streaming and live graph
 

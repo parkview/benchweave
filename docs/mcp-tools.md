@@ -18,7 +18,7 @@ distinct retention policy.
 | `get_config` | — | Runtime config: profiles (name/unit/gain/offset/show/colour, computed) + settings |
 | `set_config` | `config` | The stored config; rejects configs that would break recording/conversion |
 | `set_averaging` | `n` | Status; `n` must be one of 0, 4, 8, 16, 32, 64, 128, 256 (board must be idle) |
-| `set_channels` | `mask` | Status; mask 0..63, bit 0 = A0 … bit 5 = A7, persisted (board must be idle) |
+| `set_channels` | `mask` | Status; mask 1..63; bits 0-4 = A0-A4, bit 5 = A7, persisted (board must be idle) |
 
 ## Capture
 

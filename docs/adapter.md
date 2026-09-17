@@ -25,7 +25,8 @@ app and MCP server call.
 `descriptor.json` declares the adapter entry point
 (`adc_6ch_12bit.adapter:create_plugin`), the serial transport settings
 (2 Mbps, 8N1), the `identify`/`invoke`/`reset` operations with their
-timeouts (2 s / 30 s / 2 s), the six channels `a0`–`a7`, the
+timeouts (2 s / 30 s / 2 s), the six channels `a0`, `a1`, `a2`, `a3`,
+`a4`, and `a7`, the
 `otdp.daq/1.0.0` actions, and SHA-256-pinned contract schemas. The manager
 reads its operation timeouts from here rather than hard-coding them.
 

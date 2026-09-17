@@ -49,7 +49,8 @@ app = FastAPI(
         "and retention, power analysis, and HTML report export. Built for a "
         "single operator on localhost - there is no authentication, CORS "
         "policy, or CSRF protection. Request bodies over 20 MiB are "
-        "rejected with 413."
+        "rejected with 413; chunked uploads with no declared length are "
+        "rejected with 411."
     ),
     lifespan=lifespan,
 )

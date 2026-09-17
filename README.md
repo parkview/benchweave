@@ -18,8 +18,8 @@ What's in the box:
   captures, and list/load/inspect recorded captures from an agent session.
 - **Capture library**: CSV captures on disk with a SQLite overlay for
   projects, retention, annotations, and power-analysis settings.
-- **Plugin** `plugins/adc_6ch_12bit/`: the binary protocol codec, serial
-  driver, board discovery, and channel-conversion config.
+- **Plugin** `plugins/adc_6ch_12bit/`: the binary protocol codec, SDK
+  adapter, board discovery, and channel-conversion config.
 - **Firmware** `firmware/ch32v006e8r_adc/`: the board's CH32V006 firmware
   (MounRiver toolchain Makefile).
 
@@ -43,7 +43,7 @@ candidate ports with an IDENTIFY exchange. One-off captures without the web
 UI:
 
 ```sh
-uv run python scripts/adc_capture.py --seconds 10 --out capture.csv
+uv run python scripts/adc_capture.py --seconds 10 --output capture.csv
 ```
 
 The MCP server is launched by MCP clients as `uv run benchweave-adc-mcp`
