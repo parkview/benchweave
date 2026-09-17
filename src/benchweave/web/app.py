@@ -238,8 +238,8 @@ def set_averaging(body: AveragingBody) -> dict[str, object]:
 
 @app.post("/api/channels")
 def set_channels(body: ChannelsBody) -> dict[str, object]:
-    if not 0 <= body.mask <= CHANNEL_MASK_ALL:
-        raise HTTPException(status_code=422, detail=f"mask must be 0..{CHANNEL_MASK_ALL}")
+    if not 1 <= body.mask <= CHANNEL_MASK_ALL:
+        raise HTTPException(status_code=422, detail=f"mask must be 1..{CHANNEL_MASK_ALL}")
     try:
         return manager.set_channels(body.mask)
     except Exception as exc:

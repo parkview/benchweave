@@ -153,7 +153,7 @@ def test_set_channels_valid(client: TestClient, fake_manager: FakeBoardManager) 
     assert fake_manager.called("set_channels") == [(0x0F,)]
 
 
-@pytest.mark.parametrize("mask", [-1, 0x40])
+@pytest.mark.parametrize("mask", [-1, 0, 0x40])
 def test_set_channels_invalid_is_422(
     client: TestClient, fake_manager: FakeBoardManager, mask: int
 ) -> None:

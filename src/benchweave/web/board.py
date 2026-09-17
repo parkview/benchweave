@@ -325,6 +325,11 @@ class BoardManager:
         channels = [cid for index, cid in enumerate(CHANNEL_IDS) if mask & (1 << index)]
         if not channels:
             raise ValueError("channel mask must select at least one channel")
+        # Invalidate the cache up front: a configure that fails part-way (say
+        # SET_AVERAGING acked but SET_CHANNELS refused) leaves the device in a
+        # state the old configuration no longer describes, so the next arm must
+        # reconfigure rather than reuse it. Restored on success below.
+        self._stream_config_id = None
         configuration_id = self._next_id("cfg")
         self._invoke(
             _ACTION_CONFIGURE,
@@ -859,7 +864,7 @@ class BoardManager:
                 return self.status()
             self._paused = False
             acquisition_id = self._next_id("acq")
-            with suppress(Exception):
+            try:
                 configuration_id = self._stream_config_id
                 if configuration_id is None:
                     configuration_id = self._configure_stream_locked(
@@ -874,6 +879,14 @@ class BoardManager:
                     },
                 )
                 self._acquisition_id = acquisition_id
+            except Exception as exc:
+                # Arm failed: restore the paused state and surface the error
+                # instead of resuming the recorder and pumping an acquisition
+                # the adapter never registered (next_event answers unknown
+                # acquisitions with an immediate None — a hot loop).
+                self._paused = True
+                self._last_error = f"resume failed: {exc}"
+                return self.status()
             if self._recorder is not None:
                 self._recorder.resume()
             self._start_pump_locked(acquisition_id)
@@ -963,6 +976,16 @@ class BoardManager:
             self._last_error = f"stream stopped: {exc}"
             self._streaming = False
             self._paused = False
+            # Mirror _stop_stream_locked's cleanup: _streaming is already
+            # False, so no later stop_stream/disconnect will release the
+            # recorder — do it here or the CSV handle leaks and the next
+            # start_stream overwrites an open recorder.
+            self._recording = False
+            self._acquisition_id = None
+            stale, self._recorder = self._recorder, None
+            if stale is not None:
+                with suppress(Exception):
+                    stale.close()
 
     # -- live stream fan-out -------------------------------------------------
 
