@@ -64,6 +64,15 @@ class IdentifyInfo:
     resolution: int
 
 
+@dataclass(frozen=True)
+class Sample:
+    """One parsed SAMPLE frame plus the hardware averaging in force when it arrived."""
+
+    counter: int
+    channels: tuple[int, ...]
+    averaged_n: int
+
+
 def crc16(data: bytes) -> int:
     """CRC-16/CCITT-FALSE: poly 0x1021, init 0xFFFF, no reflect, no xorout."""
     crc = 0xFFFF

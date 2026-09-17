@@ -1,31 +1,60 @@
-"""Board manager: owns the AdcDriver, bridges its stream to asyncio, and records to CSV."""
+"""Board manager: drives the ADC board through its OTDP adapter, records to CSV.
+
+The manager keeps the synchronous public API the web app and MCP server call,
+but everything device-shaped now flows through the SDK stack: a
+``serial.Serial`` port wrapped in :class:`~benchweave.web.host.SerialLink`,
+:class:`~benchweave.web.host.SerialHostServices` implementing the host side of
+the contract, and the plugin's :class:`~plugins.adc_6ch_12bit.adapter.AdcAdapter`
+owning protocol semantics.
+
+Threading model: the adapter is async and single-session, so the manager runs
+a dedicated HOST event loop on its own thread (started lazily on first
+connect). Sync methods submit coroutines with ``run_coroutine_threadsafe`` and
+block on the result; the adapter and its coroutines are only ever touched from
+that loop. Live samples are pumped by a long-running coroutine on the host
+loop and fanned out to SSE subscriber queues living on the WEB app's loop
+(``set_loop``) via ``call_soon_threadsafe``.
+"""
 
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import csv
 import json
 import logging
-import queue
 import shutil
 import subprocess
 import sys
 import threading
 import time
+from collections.abc import Coroutine
 from contextlib import suppress
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, TypeVar, cast
 
+import serial  # type: ignore[import-untyped]
+
+from benchweave.web.host import (
+    AdcOperationContext,
+    SerialHostServices,
+    SerialLink,
+    Transport,
+)
+from plugins import adc_6ch_12bit as _plugin_pkg
 from plugins.adc_6ch_12bit import (
+    AVERAGING_CHOICES,
+    CHANNEL_IDS,
     CHANNEL_KEYS,
     CHANNEL_MASK_ALL,
-    AdcDriver,
+    AdcAdapter,
     Sample,
     adc_capture_filename,
     capture_dir,
     convert_channels,
+    create_plugin,
     discover_adc_boards,
     estimate_max_sps,
     evaluate_expr,
@@ -37,8 +66,66 @@ from plugins.adc_6ch_12bit import (
 
 _LOG = logging.getLogger(__name__)
 
+_T = TypeVar("_T")
+
 #: Live SSE subscribers each hold a 2000-deep queue; cap how many exist.
 MAX_SUBSCRIBERS = 32
+
+#: The board's fixed UART rate (scripts may override before connecting).
+DEFAULT_BAUD = 2_000_000
+
+#: The plugin's OTDP descriptor, loaded once: operation timeouts and identity.
+_DESCRIPTOR_PATH = Path(_plugin_pkg.__file__).resolve().parent / "descriptor.json"
+_DESCRIPTOR: dict[str, Any] = json.loads(_DESCRIPTOR_PATH.read_text(encoding="utf-8"))
+
+
+def _operation_timeout(verb: str, fallback: float) -> float:
+    try:
+        return float(_DESCRIPTOR["operations"][verb]["timeout_ms"]) / 1000.0
+    except (KeyError, TypeError, ValueError):
+        return fallback
+
+
+_IDENTIFY_TIMEOUT_S = _operation_timeout("identify", 2.0)
+_INVOKE_TIMEOUT_S = _operation_timeout("invoke", 30.0)
+#: Extra slack the sync caller grants the host loop beyond an op's deadline.
+_SUBMIT_MARGIN_S = 5.0
+#: An open-ended live stream: one arm covers a day, the pump context likewise.
+_STREAM_MAX_DURATION_MS = 24 * 60 * 60 * 1000
+_PUMP_DEADLINE_S = 24 * 60 * 60.0
+#: How long a single-shot acquisition waits for its sample frame.
+_SINGLE_SAMPLE_TIMEOUT_S = 2.0
+#: "Unbounded" sample budget for streaming configurations.
+_STREAM_SAMPLE_COUNT = 1_000_000
+
+_ACTION_CONFIGURE = "otdp.daq.configure/1.0.0"
+_ACTION_ARM = "otdp.daq.arm/1.0.0"
+_ACTION_TRIGGER = "otdp.daq.trigger/1.0.0"
+_ACTION_ABORT = "otdp.daq.abort/1.0.0"
+
+
+def _open_transport(device: str) -> Transport:
+    """Open the board's serial port (module-level so tests can inject a fake)."""
+    return cast(Transport, serial.Serial(device, DEFAULT_BAUD, timeout=0.05))
+
+
+def _parse_firmware(value: object) -> tuple[int | None, int | None]:
+    """Split the adapter's ``"major.minor"`` firmware string back into ints."""
+    major_s, _, minor_s = str(value or "").partition(".")
+    try:
+        return int(major_s), int(minor_s)
+    except ValueError:
+        return None, None
+
+
+def _sample_from_event(event: dict[str, Any]) -> Sample:
+    """Rebuild the full-frame :class:`Sample` from an event's x-adc-sample."""
+    raw = cast(dict[str, Any], event.get("x-adc-sample") or {})
+    return Sample(
+        counter=int(raw.get("counter", 0)),
+        channels=tuple(int(value) for value in raw.get("channels", ())),
+        averaged_n=int(raw.get("averaged_n", 0)),
+    )
 
 
 class _Recorder:
@@ -128,11 +215,13 @@ class BoardManager:
     """Owns one ADC board: lifecycle, control, live fan-out, and optional CSV recording."""
 
     def __init__(self) -> None:
-        self._driver = AdcDriver()
         self._lock = threading.Lock()
-        self._loop: asyncio.AbstractEventLoop | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None  # the WEB app's loop
+        self._host_loop: asyncio.AbstractEventLoop | None = None
+        self._host_thread: threading.Thread | None = None
+        self._adapter: AdcAdapter | None = None
+        self._link: SerialLink | None = None
         self._subscribers: set[asyncio.Queue[Sample]] = set()
-        self._worker: threading.Thread | None = None
         self._device: str | None = None
         self._serial = ""
         self._fw_major: int | None = None
@@ -148,6 +237,118 @@ class BoardManager:
         self._record_path: str | None = None
         self._last_png_path: str | None = None
         self._last_error: str | None = None
+        self._id_counter = 0
+        self._stream_config_id: str | None = None
+        self._acquisition_id: str | None = None
+        self._pump_context: AdcOperationContext | None = None
+        self._pump_future: concurrent.futures.Future[None] | None = None
+
+    # -- host loop plumbing ----------------------------------------------------
+
+    def _ensure_host_loop(self) -> asyncio.AbstractEventLoop:
+        """The dedicated host event loop, started lazily on first use."""
+        if self._host_loop is not None:
+            return self._host_loop
+        loop = asyncio.new_event_loop()
+        started = threading.Event()
+
+        def run() -> None:
+            asyncio.set_event_loop(loop)
+            loop.call_soon(started.set)
+            loop.run_forever()
+
+        thread = threading.Thread(target=run, name="adc-host", daemon=True)
+        thread.start()
+        started.wait(timeout=5.0)
+        self._host_loop = loop
+        self._host_thread = thread
+        return loop
+
+    def _submit(self, coro: Coroutine[Any, Any, _T], timeout: float) -> _T:
+        """Run a coroutine on the host loop; block the caller for its result."""
+        future = asyncio.run_coroutine_threadsafe(coro, self._ensure_host_loop())
+        try:
+            return future.result(timeout)
+        except TimeoutError:
+            future.cancel()
+            raise RuntimeError("board operation timed out on the host loop") from None
+
+    def _next_id(self, prefix: str) -> str:
+        self._id_counter += 1
+        return f"{prefix}-{self._id_counter}"
+
+    def _context(self, operation: str, timeout_s: float) -> AdcOperationContext:
+        return AdcOperationContext(
+            operation_id=self._next_id(operation),
+            deadline_monotonic=time.monotonic() + timeout_s,
+        )
+
+    def _require_adapter(self) -> AdcAdapter:
+        if self._adapter is None:
+            raise RuntimeError("no ADC board connected")
+        return self._adapter
+
+    def _run_operation(
+        self, verb: str, arguments: dict[str, Any], timeout_s: float
+    ) -> dict[str, Any]:
+        """Execute one adapter operation; unwrap the envelope or raise."""
+        adapter = self._require_adapter()
+        context = self._context(verb, timeout_s)
+        request = {
+            "operation_id": context.operation_id,
+            "verb": verb,
+            "arguments": arguments,
+        }
+        result = self._submit(
+            adapter.execute(request, context), timeout_s + _SUBMIT_MARGIN_S
+        )
+        if result.get("status") != "ok":
+            error = cast(dict[str, Any], result.get("error") or {})
+            code = error.get("code", "ERROR")
+            message = error.get("message", "operation failed")
+            raise RuntimeError(f"{code}: {message}")
+        return cast(dict[str, Any], result.get("data") or {})
+
+    def _invoke(self, action_id: str, action_input: dict[str, Any]) -> dict[str, Any]:
+        data = self._run_operation(
+            "invoke", {"action_id": action_id, "input": action_input}, _INVOKE_TIMEOUT_S
+        )
+        return cast(dict[str, Any], data.get("result") or {})
+
+    def _configure_stream_locked(self, averaging: int, mask: int) -> str:
+        """Express averaging + channel mask through ``otdp.daq.configure``.
+
+        The configure input schema is closed (no raw averaging knob), so the
+        mapping is INVERTED: requesting ``sample_rate_hz =
+        estimate_max_sps(averaging, n_channels)`` makes the adapter's
+        nearest-averaging search land on exactly ``averaging`` — the same
+        table drives both sides, so the round trip is exact by construction.
+        """
+        channels = [cid for index, cid in enumerate(CHANNEL_IDS) if mask & (1 << index)]
+        if not channels:
+            raise ValueError("channel mask must select at least one channel")
+        configuration_id = self._next_id("cfg")
+        self._invoke(
+            _ACTION_CONFIGURE,
+            {
+                "configuration_id": configuration_id,
+                "channels": [
+                    {
+                        "channel": cid,
+                        "quantity": "voltage",
+                        "unit": "V",
+                        "range": {"mode": "auto"},
+                    }
+                    for cid in channels
+                ],
+                "sample_rate_hz": estimate_max_sps(averaging, len(channels)),
+                "sample_count": _STREAM_SAMPLE_COUNT,
+                "sampling": "simultaneous",
+                "trigger": {"kind": "immediate"},
+            },
+        )
+        self._stream_config_id = configuration_id
+        return configuration_id
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -175,19 +376,34 @@ class BoardManager:
     def connect(self, device: str) -> dict[str, object]:
         with self._lock:
             self._close_locked()
-            self._driver.open(device)
-            info = self._driver.identify()
-            self._device = device
-            self._serial = serial_for_device(device)
-            self._fw_major = info.fw_major
-            self._fw_minor = info.fw_minor
-            self._averaging = 0
-            self._streaming = False
-            self._last_error = None
-            # Re-apply the persisted channel selection to the freshly opened board.
-            mask = self._persisted_channel_mask()
-            self._driver.set_channels(mask)
-            self._channel_mask = mask
+            transport = _open_transport(device)
+            self._link = SerialLink(transport)
+            services = SerialHostServices(self._link, artifact_dir=capture_dir())
+            adapter = create_plugin()
+            self._adapter = adapter
+            try:
+                self._submit(
+                    adapter.open(
+                        _DESCRIPTOR, services, self._context("open", _IDENTIFY_TIMEOUT_S)
+                    ),
+                    _IDENTIFY_TIMEOUT_S + _SUBMIT_MARGIN_S,
+                )
+                info = self._run_operation("identify", {}, _IDENTIFY_TIMEOUT_S)
+                self._fw_major, self._fw_minor = _parse_firmware(info.get("firmware"))
+                self._device = device
+                self._serial = serial_for_device(device)
+                self._averaging = 0
+                self._streaming = False
+                self._last_error = None
+                # Re-apply the persisted channel selection to the freshly
+                # opened board (the configure invoke also pins averaging 0,
+                # so the device matches the state the manager reports).
+                mask = self._persisted_channel_mask() or CHANNEL_MASK_ALL
+                self._configure_stream_locked(self._averaging, mask)
+                self._channel_mask = mask
+            except BaseException:
+                self._close_locked()
+                raise
         return self.status()
 
     def disconnect(self) -> None:
@@ -195,10 +411,25 @@ class BoardManager:
             self._close_locked()
 
     def _close_locked(self) -> None:
-        """Close any existing connection (idempotent). Caller holds the lock."""
+        """Close any existing session (idempotent). Caller holds the lock."""
         self._stop_stream_locked()
-        with suppress(Exception):
-            self._driver.close()
+        adapter = self._adapter
+        link = self._link
+        self._adapter = None
+        self._link = None
+        if adapter is not None:
+            with suppress(Exception):
+                self._submit(
+                    adapter.close(self._context("close", _IDENTIFY_TIMEOUT_S)),
+                    _IDENTIFY_TIMEOUT_S + _SUBMIT_MARGIN_S,
+                )
+        if link is not None:
+            # adapter.close already closed the transport via the services;
+            # belt-and-braces for a session that failed before open() bound them.
+            with suppress(Exception):
+                link.close()
+        self._stream_config_id = None
+        self._acquisition_id = None
         self._device = None
         self._serial = ""
         self._fw_major = None
@@ -306,15 +537,81 @@ class BoardManager:
     # -- capture -------------------------------------------------------------
 
     def sample_once(self) -> dict[str, object]:
-        """Read a single sample (in single-shot mode) and return converted values."""
+        """Read a single sample (single-shot acquisition) and return converted values."""
         with self._lock:
             self._require_idle()
-            sample = self._driver.sample_once()
+            n_channels = max(self._channel_mask.bit_count(), 1)
+            configuration_id = self._next_id("cfg")
+            acquisition_id = self._next_id("acq")
+            self._invoke(
+                _ACTION_CONFIGURE,
+                {
+                    "configuration_id": configuration_id,
+                    "channels": [
+                        {
+                            "channel": cid,
+                            "quantity": "voltage",
+                            "unit": "V",
+                            "range": {"mode": "auto"},
+                        }
+                        for index, cid in enumerate(CHANNEL_IDS)
+                        if self._channel_mask & (1 << index)
+                    ]
+                    or [
+                        {
+                            "channel": cid,
+                            "quantity": "voltage",
+                            "unit": "V",
+                            "range": {"mode": "auto"},
+                        }
+                        for cid in CHANNEL_IDS
+                    ],
+                    "sample_rate_hz": estimate_max_sps(self._averaging, n_channels),
+                    "sample_count": 1,
+                    "sampling": "simultaneous",
+                    "trigger": {"kind": "software"},
+                },
+            )
+            self._invoke(
+                _ACTION_ARM,
+                {
+                    "configuration_id": configuration_id,
+                    "acquisition_id": acquisition_id,
+                    "max_duration_ms": 10_000,
+                },
+            )
+            self._invoke(_ACTION_TRIGGER, {"acquisition_id": acquisition_id})
+            try:
+                context = self._context("single", _SINGLE_SAMPLE_TIMEOUT_S)
+                event = self._submit(
+                    self._await_sample_event(acquisition_id, context),
+                    _SINGLE_SAMPLE_TIMEOUT_S + _SUBMIT_MARGIN_S,
+                )
+            finally:
+                with suppress(Exception):
+                    self._invoke(_ACTION_ABORT, {"acquisition_id": acquisition_id})
+            if event is None:
+                raise RuntimeError("timed out waiting for sample")
+            sample = _sample_from_event(event)
             return {
                 "counter": sample.counter,
                 "averaged_n": sample.averaged_n,
                 "channels": self.convert_sample(sample),
             }
+
+    async def _await_sample_event(
+        self, acquisition_id: str, context: AdcOperationContext
+    ) -> dict[str, Any] | None:
+        """Drain ``next_event`` until a sample arrives or the deadline passes."""
+        adapter = self._require_adapter()
+        while not context.is_cancelled() and time.monotonic() < context.deadline_monotonic:
+            try:
+                event = await adapter.next_event(acquisition_id, context)
+            except (TimeoutError, ConnectionError):
+                return None
+            if event is not None:
+                return event
+        return None
 
     def capture_samples(
         self, count: int, *, tag: str | None = None, timeout: float = 10.0
@@ -337,11 +634,12 @@ class BoardManager:
         """Run a bounded capture: stream samples into a CSV and summarize the channels.
 
         Exactly one of ``count`` (fixed number of samples) or ``seconds`` (a
-        duration) must be given. A background thread drains ``iter_samples`` into
-        a queue with an end-of-stream sentinel, so a board that stops sending
-        never blocks the deadline check on the main thread. The return value is a
-        compact summary (path, count, actual rate, per-channel min/mean/max) - the
-        full record lives in the CSV, so a long capture never balloons the response.
+        duration) must be given. The whole capture is one coroutine on the
+        host loop — arm an immediate acquisition, drain ``next_event`` until
+        the target or the deadline, abort — with the calling thread blocked on
+        its result. The return value is a compact summary (path, count, actual
+        rate, per-channel min/mean/max) - the full record lives in the CSV, so
+        a long capture never balloons the response.
         """
         with self._lock:
             self._require_idle()
@@ -366,108 +664,140 @@ class BoardManager:
             col_names = {c["key"]: c["name"] for c in output_channels(self._config)}
             path = capture_dir() / adc_capture_filename(self._serial, tag=tag)
             recorder = _Recorder(str(path), names, metadata)
-            inbox: queue.Queue[Sample | None] = queue.Queue()
 
-            def pump() -> None:
-                try:
-                    for sample in self._driver.iter_samples():
-                        inbox.put(sample)
-                finally:
-                    inbox.put(None)  # end-of-stream sentinel
-
-            self._driver.start_stream()
+            configuration_id = self._stream_config_id
+            acquisition_id = self._next_id("acq")
+            try:
+                if configuration_id is None:
+                    configuration_id = self._configure_stream_locked(
+                        self._averaging, self._channel_mask
+                    )
+                self._invoke(
+                    _ACTION_ARM,
+                    {
+                        "configuration_id": configuration_id,
+                        "acquisition_id": acquisition_id,
+                        "max_duration_ms": max(int(duration * 1000) + 1000, 1000),
+                    },
+                )
+            except BaseException:
+                recorder.close()
+                raise
             self._streaming = True
             self._counter = 0
-            worker = threading.Thread(target=pump, name="adc-capture", daemon=True)
-            worker.start()
-
-            start = time.monotonic()
-            deadline = start + duration
-            collected = 0
-            mins: dict[str, float] = {}
-            maxs: dict[str, float] = {}
-            totals: dict[str, float] = {}
-            counts: dict[str, int] = {}
-            names_by_key: dict[str, str] = {}
-            units_by_key: dict[str, str] = {}
-            order: list[str] = []
+            context = AdcOperationContext(
+                operation_id=self._next_id("capture"),
+                deadline_monotonic=time.monotonic() + duration + 30.0,
+            )
             try:
-                while (target is None or collected < target) and time.monotonic() < deadline:
-                    try:
-                        sample = inbox.get(timeout=0.1)
-                    except queue.Empty:
-                        continue
-                    if sample is None:
-                        break
-                    sample = replace(sample, counter=self._counter)
-                    self._counter += 1
-                    channels = self.convert_sample(sample)
-                    recorder.write(
-                        sample.counter,
-                        sample.averaged_n,
-                        [c["value"] for c in channels],
-                    )
-                    collected += 1
-                    for c in channels:
-                        key = str(c["key"])
-                        value = cast(float | None, c["value"])
-                        if value is None:
-                            continue  # a computed channel that failed to evaluate
-                        if key not in mins:
-                            order.append(key)
-                            names_by_key[key] = col_names.get(key, str(c["name"]))
-                            units_by_key[key] = str(c["unit"])
-                            mins[key] = value
-                            maxs[key] = value
-                            totals[key] = 0.0
-                            counts[key] = 0
-                        mins[key] = min(mins[key], value)
-                        maxs[key] = max(maxs[key], value)
-                        totals[key] += value
-                        counts[key] += 1
-                if target is not None and collected < target:
-                    raise RuntimeError(
-                        f"capture timed out: got {collected}/{target} samples in {duration:.1f}s"
-                    )
-                elapsed = time.monotonic() - start
-                channels_summary = [
-                    {
-                        "key": key,
-                        "name": names_by_key[key],
-                        "unit": units_by_key[key],
-                        "min": round(mins[key], 6),
-                        "mean": round(totals[key] / counts[key], 6),
-                        "max": round(maxs[key], 6),
-                    }
-                    for key in order
-                ]
-                return {
-                    "path": str(path),
-                    "count": collected,
-                    "duration_s": round(elapsed, 3),
-                    "samples_per_second": round(collected / elapsed, 1) if elapsed > 0 else 0.0,
-                    "channels": channels_summary,
-                }
+                return self._submit(
+                    self._capture_pump(
+                        acquisition_id, target, duration, str(path), recorder, col_names, context
+                    ),
+                    duration + 30.0 + _SUBMIT_MARGIN_S,
+                )
             finally:
+                context.cancel()
                 with suppress(Exception):
-                    self._driver.stop_stream()
+                    self._invoke(_ACTION_ABORT, {"acquisition_id": acquisition_id})
                 self._streaming = False
-                worker.join(timeout=1.0)
                 recorder.close()
+
+    async def _capture_pump(
+        self,
+        acquisition_id: str,
+        target: int | None,
+        duration: float,
+        path: str,
+        recorder: _Recorder,
+        col_names: dict[str, str],
+        context: AdcOperationContext,
+    ) -> dict[str, object]:
+        """The bounded capture loop; runs on the host loop."""
+        adapter = self._require_adapter()
+        start = time.monotonic()
+        deadline = start + duration
+        collected = 0
+        mins: dict[str, float] = {}
+        maxs: dict[str, float] = {}
+        totals: dict[str, float] = {}
+        counts: dict[str, int] = {}
+        names_by_key: dict[str, str] = {}
+        units_by_key: dict[str, str] = {}
+        order: list[str] = []
+        while (target is None or collected < target) and time.monotonic() < deadline:
+            event = await adapter.next_event(acquisition_id, context)
+            if event is None:
+                continue
+            # The x-adc-sample carries the FIRMWARE counter; re-stamp with the
+            # manager counter so CSV rows count recorded samples from zero.
+            sample = replace(_sample_from_event(event), counter=self._counter)
+            self._counter += 1
+            channels = self.convert_sample(sample)
+            recorder.write(
+                sample.counter,
+                sample.averaged_n,
+                [c["value"] for c in channels],
+            )
+            collected += 1
+            for c in channels:
+                key = str(c["key"])
+                value = cast(float | None, c["value"])
+                if value is None:
+                    continue  # a computed channel that failed to evaluate
+                if key not in mins:
+                    order.append(key)
+                    names_by_key[key] = col_names.get(key, str(c["name"]))
+                    units_by_key[key] = str(c["unit"])
+                    mins[key] = value
+                    maxs[key] = value
+                    totals[key] = 0.0
+                    counts[key] = 0
+                mins[key] = min(mins[key], value)
+                maxs[key] = max(maxs[key], value)
+                totals[key] += value
+                counts[key] += 1
+        if target is not None and collected < target:
+            raise RuntimeError(
+                f"capture timed out: got {collected}/{target} samples in {duration:.1f}s"
+            )
+        elapsed = time.monotonic() - start
+        channels_summary = [
+            {
+                "key": key,
+                "name": names_by_key[key],
+                "unit": units_by_key[key],
+                "min": round(mins[key], 6),
+                "mean": round(totals[key] / counts[key], 6),
+                "max": round(maxs[key], 6),
+            }
+            for key in order
+        ]
+        return {
+            "path": path,
+            "count": collected,
+            "duration_s": round(elapsed, 3),
+            "samples_per_second": round(collected / elapsed, 1) if elapsed > 0 else 0.0,
+            "channels": channels_summary,
+        }
 
     # -- control -------------------------------------------------------------
 
     def set_averaging(self, n: int) -> dict[str, object]:
         with self._lock:
             self._require_idle()
-            self._driver.set_averaging(n)
+            if n not in AVERAGING_CHOICES:
+                raise ValueError(f"averaging must be one of {AVERAGING_CHOICES}")
+            self._configure_stream_locked(n, self._channel_mask)
             self._averaging = n
         return self.status()
 
     def set_channels(self, mask: int) -> dict[str, object]:
         with self._lock:
             self._require_idle()
-            self._driver.set_channels(mask)
+            if not 0 <= mask <= CHANNEL_MASK_ALL:
+                raise ValueError(f"channel mask out of range: {mask}")
+            self._configure_stream_locked(self._averaging, mask)
             self._channel_mask = mask
             self._config.setdefault("settings", {})["channel_mask"] = mask
             save_config(self._config)
@@ -477,7 +807,21 @@ class BoardManager:
         with self._lock:
             self._require_connected()
             if not self._streaming:
-                self._driver.start_stream()
+                configuration_id = self._stream_config_id
+                if configuration_id is None:
+                    configuration_id = self._configure_stream_locked(
+                        self._averaging, self._channel_mask
+                    )
+                acquisition_id = self._next_id("acq")
+                self._invoke(
+                    _ACTION_ARM,
+                    {
+                        "configuration_id": configuration_id,
+                        "acquisition_id": acquisition_id,
+                        "max_duration_ms": _STREAM_MAX_DURATION_MS,
+                    },
+                )
+                self._acquisition_id = acquisition_id
                 self._streaming = True
                 self._paused = False
                 self._counter = 0
@@ -489,10 +833,7 @@ class BoardManager:
                     self._recorder = None
                 self._record_path = self._recorder.path if self._recorder else None
                 self._recording = record
-                self._worker = threading.Thread(
-                    target=self._stream_worker, name="adc-stream", daemon=True
-                )
-                self._worker.start()
+                self._start_pump_locked(acquisition_id)
         return self.status()
 
     def stop_stream(self) -> dict[str, object]:
@@ -507,47 +848,127 @@ class BoardManager:
             if not self._streaming or self._paused:
                 return self.status()
             self._paused = True
-            with suppress(Exception):
-                self._driver.stop_stream()
-            self._join_worker()
+            self._stop_pump_locked()
+            if self._acquisition_id is not None:
+                with suppress(Exception):
+                    self._invoke(_ACTION_ABORT, {"acquisition_id": self._acquisition_id})
+                self._acquisition_id = None
         return self.status()
 
     def resume_stream(self) -> dict[str, object]:
-        """Resume collection after a pause, reusing the open CSV file."""
+        """Resume collection after a pause: fresh acquisition, same CSV file."""
         with self._lock:
             self._require_connected()
             if not self._streaming or not self._paused:
                 return self.status()
             self._paused = False
+            acquisition_id = self._next_id("acq")
             with suppress(Exception):
-                self._driver.start_stream()
+                configuration_id = self._stream_config_id
+                if configuration_id is None:
+                    configuration_id = self._configure_stream_locked(
+                        self._averaging, self._channel_mask
+                    )
+                self._invoke(
+                    _ACTION_ARM,
+                    {
+                        "configuration_id": configuration_id,
+                        "acquisition_id": acquisition_id,
+                        "max_duration_ms": _STREAM_MAX_DURATION_MS,
+                    },
+                )
+                self._acquisition_id = acquisition_id
             if self._recorder is not None:
                 self._recorder.resume()
-            self._worker = threading.Thread(
-                target=self._stream_worker, name="adc-stream", daemon=True
-            )
-            self._worker.start()
+            self._start_pump_locked(acquisition_id)
         return self.status()
-
-    def _join_worker(self) -> None:
-        worker = self._worker
-        if worker is not None:
-            worker.join(timeout=2.0)
-            self._worker = None
 
     def _stop_stream_locked(self) -> None:
         if not self._streaming:
             return
-        with suppress(Exception):
-            self._driver.stop_stream()
+        self._stop_pump_locked()
+        if self._acquisition_id is not None:
+            with suppress(Exception):
+                self._invoke(_ACTION_ABORT, {"acquisition_id": self._acquisition_id})
+            self._acquisition_id = None
         self._streaming = False
         self._paused = False
-        self._join_worker()
         self._recording = False
         if self._recorder is not None:
             with suppress(Exception):
                 self._recorder.close()
             self._recorder = None
+
+    # -- live stream pump ------------------------------------------------------
+
+    def _start_pump_locked(self, acquisition_id: str) -> None:
+        context = AdcOperationContext(
+            operation_id=self._next_id("pump"),
+            deadline_monotonic=time.monotonic() + _PUMP_DEADLINE_S,
+        )
+        self._pump_context = context
+        self._pump_future = asyncio.run_coroutine_threadsafe(
+            self._stream_pump(acquisition_id, context), self._ensure_host_loop()
+        )
+
+    def _stop_pump_locked(self) -> None:
+        """Cancel the pump and wait for it to drain off the host loop."""
+        context = self._pump_context
+        future = self._pump_future
+        self._pump_context = None
+        self._pump_future = None
+        if context is not None:
+            context.cancel()
+        if future is not None:
+            with suppress(Exception):
+                future.result(timeout=2.0)
+            future.cancel()
+
+    async def _stream_pump(
+        self, acquisition_id: str, context: AdcOperationContext
+    ) -> None:
+        """Long-running sample pump; runs on the host loop until cancelled."""
+        adapter = self._adapter
+        if adapter is None:
+            return
+        recorder = self._recorder
+        web_loop = self._loop
+        interval = self._record_interval()  # seconds between samples; 0 = every sample
+        last = 0.0
+        try:
+            while not context.is_cancelled():
+                event = await adapter.next_event(acquisition_id, context)
+                if context.is_cancelled():
+                    break
+                if event is None:
+                    continue
+                now = time.monotonic()
+                if interval > 0.0 and now - last < interval:
+                    continue
+                last = now
+                # Count recorded samples (post-decimation) so the graph and CSV row
+                # order match, instead of the firmware's board-lifetime sample count.
+                # The counter lives on the manager so it survives a pause/resume.
+                sample = replace(_sample_from_event(event), counter=self._counter)
+                self._counter += 1
+                if recorder is not None:
+                    channels = self.convert_sample(sample)
+                    recorder.write(
+                        sample.counter, sample.averaged_n, [c["value"] for c in channels]
+                    )
+                if web_loop is not None:
+                    # The SSE queues live on the web app's loop, not the host loop.
+                    web_loop.call_soon_threadsafe(self._publish, sample)
+        except Exception as exc:
+            if context.is_cancelled():
+                return  # a cancelled pump surfacing as TimeoutError is a clean stop
+            # A transport fault or CSV write failure must not vanish while
+            # status() keeps claiming streaming: log it, surface it, and stop
+            # claiming a stream that is no longer running.
+            _LOG.exception("stream pump stopped on error")
+            self._last_error = f"stream stopped: {exc}"
+            self._streaming = False
+            self._paused = False
 
     # -- live stream fan-out -------------------------------------------------
 
@@ -560,38 +981,6 @@ class BoardManager:
 
     def unsubscribe(self, queue: asyncio.Queue[Sample]) -> None:
         self._subscribers.discard(queue)
-
-    def _stream_worker(self) -> None:
-        loop = self._loop
-        recorder = self._recorder
-        interval = self._record_interval()  # seconds between samples; 0 = every sample
-        last = 0.0
-        try:
-            for sample in self._driver.iter_samples():
-                now = time.monotonic()
-                if interval > 0.0 and now - last < interval:
-                    continue
-                last = now
-                # Count recorded samples (post-decimation) so the graph and CSV row
-                # order match, instead of the firmware's board-lifetime sample count.
-                # The counter lives on the manager so it survives a pause/resume.
-                sample = replace(sample, counter=self._counter)
-                self._counter += 1
-                if recorder is not None:
-                    channels = self.convert_sample(sample)
-                    recorder.write(
-                        sample.counter, sample.averaged_n, [c["value"] for c in channels]
-                    )
-                if loop is not None:
-                    loop.call_soon_threadsafe(self._publish, sample)
-        except Exception as exc:
-            # A driver fault or CSV write failure used to vanish here while
-            # status() kept claiming streaming: log it, surface it, and stop
-            # claiming a stream that is no longer running.
-            _LOG.exception("stream worker stopped on error")
-            self._last_error = f"stream stopped: {exc}"
-            self._streaming = False
-            self._paused = False
 
     def _publish(self, sample: Sample) -> None:
         for q in self._subscribers:

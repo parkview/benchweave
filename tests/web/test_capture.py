@@ -1,3 +1,8 @@
+"""Bounded captures and single-shot sampling over the adapter/host stack."""
+
+from __future__ import annotations
+
+import copy
 from collections.abc import Iterator
 from pathlib import Path
 from typing import cast
@@ -7,66 +12,33 @@ import pytest
 
 from benchweave.web.board import BoardManager
 from plugins.adc_6ch_12bit import CHANNEL_KEYS
-from plugins.adc_6ch_12bit.driver import Sample
-from plugins.adc_6ch_12bit.protocol import IdentifyInfo
-
-
-class _CaptureDriver:
-    """Minimal fake of AdcDriver for capture tests."""
-
-    def __init__(self) -> None:
-        self.opened = False
-        self.streaming = False
-        self.samples: Iterator[Sample] = iter([])
-
-    def open(self, device: str, *, baud: int = 2_000_000, timeout: float = 1.0) -> None:
-        self.opened = True
-
-    def identify(self, *, timeout: float | None = None) -> IdentifyInfo:
-        return IdentifyInfo(1, 0, 2, 6, 12)
-
-    def set_averaging(self, n: int, *, timeout: float | None = None) -> None:
-        pass
-
-    def set_channels(self, mask: int, *, timeout: float | None = None) -> None:
-        pass
-
-    def start_stream(self, *, timeout: float | None = None) -> None:
-        self.streaming = True
-
-    def stop_stream(self, *, timeout: float | None = None) -> None:
-        self.streaming = False
-
-    def iter_samples(self) -> Iterator[Sample]:
-        return self.samples
-
-    def close(self) -> None:
-        self.opened = False
-
-
-def _driver_of(m: BoardManager) -> _CaptureDriver:
-    return cast(_CaptureDriver, m._driver)
+from plugins.adc_6ch_12bit.config import DEFAULT_CONFIG
+from tests.adc.fakeboard import SampleTuple, TransportFactory
 
 
 @pytest.fixture
-def manager() -> Iterator[BoardManager]:
+def stack() -> Iterator[tuple[BoardManager, TransportFactory]]:
+    factory = TransportFactory()
     with (
-        mock.patch("benchweave.web.board.AdcDriver", _CaptureDriver),
+        mock.patch("benchweave.web.board._open_transport", factory),
         mock.patch("benchweave.web.board.save_config"),
     ):
-        m = BoardManager()
-        m.connect("/dev/ttyACM2")
-        yield m
+        manager = BoardManager()
+        manager._config = copy.deepcopy(DEFAULT_CONFIG)
+        manager.connect("/dev/ttyACM2")
+        yield manager, factory
+        manager.disconnect()
 
 
-def _samples(n: int) -> list[Sample]:
-    return [Sample(counter=i, channels=(i, 1, 2, 3, 4, 5), averaged_n=0) for i in range(n)]
+def _samples(n: int) -> list[SampleTuple]:
+    return [(i, (i, 1, 2, 3, 4, 5)) for i in range(n)]
 
 
 def test_capture_samples_returns_n_and_writes_tagged_csv(
-    manager: BoardManager, tmp_path: Path
+    stack: tuple[BoardManager, TransportFactory], tmp_path: Path
 ) -> None:
-    _driver_of(manager).samples = iter(_samples(3))
+    manager, factory = stack
+    factory.last.set_samples(_samples(3))
     with mock.patch("benchweave.web.board.capture_dir", return_value=tmp_path):
         result = manager.capture_samples(3, tag="MCP")
 
@@ -84,16 +56,22 @@ def test_capture_samples_returns_n_and_writes_tagged_csv(
     assert len(data_rows) == 4  # header row + 3 samples
 
 
-def test_capture_samples_without_tag_omits_mcp(manager: BoardManager, tmp_path: Path) -> None:
-    _driver_of(manager).samples = iter(_samples(1))
+def test_capture_samples_without_tag_omits_mcp(
+    stack: tuple[BoardManager, TransportFactory], tmp_path: Path
+) -> None:
+    manager, factory = stack
+    factory.last.set_samples(_samples(1))
     with mock.patch("benchweave.web.board.capture_dir", return_value=tmp_path):
         result = manager.capture_samples(1)
 
     assert "MCP" not in Path(cast(str, result["path"])).name
 
 
-def test_capture_samples_raises_when_not_enough(manager: BoardManager, tmp_path: Path) -> None:
-    _driver_of(manager).samples = iter(_samples(1))
+def test_capture_samples_raises_when_not_enough(
+    stack: tuple[BoardManager, TransportFactory], tmp_path: Path
+) -> None:
+    manager, factory = stack
+    factory.last.set_samples(_samples(1))
     with (
         mock.patch("benchweave.web.board.capture_dir", return_value=tmp_path),
         pytest.raises(RuntimeError, match="timed out"),
@@ -101,10 +79,13 @@ def test_capture_samples_raises_when_not_enough(manager: BoardManager, tmp_path:
         manager.capture_samples(3, tag="MCP", timeout=0.05)
 
 
-def test_capture_seconds_drains_available(manager: BoardManager, tmp_path: Path) -> None:
-    _driver_of(manager).samples = iter(_samples(5))
+def test_capture_seconds_drains_available(
+    stack: tuple[BoardManager, TransportFactory], tmp_path: Path
+) -> None:
+    manager, factory = stack
+    factory.last.set_samples(_samples(5))
     with mock.patch("benchweave.web.board.capture_dir", return_value=tmp_path):
-        result = manager.capture_seconds(60.0, tag="MCP")
+        result = manager.capture_seconds(0.3, tag="MCP")
 
     assert result["count"] == 5
     assert len(cast(list[dict[str, object]], result["channels"])) >= 1
@@ -121,42 +102,44 @@ class _SpyRecorder:
         self.closed = True
 
 
-def test_capture_seconds_stops_at_deadline(manager: BoardManager, tmp_path: Path) -> None:
-    _driver_of(manager).samples = iter(_samples(10))
-    clock = iter([0.0, 0.25, 0.25])  # start 0.0; deadline 0.2; loop check and elapsed both 0.25
+def test_capture_seconds_stops_at_deadline(
+    stack: tuple[BoardManager, TransportFactory], tmp_path: Path
+) -> None:
+    manager, factory = stack
+    factory.last.set_samples([])  # the board never produces a sample
     with (
         mock.patch("benchweave.web.board.capture_dir", return_value=tmp_path),
         mock.patch("benchweave.web.board._Recorder", _SpyRecorder),
-        mock.patch("benchweave.web.board.time.monotonic", side_effect=lambda: next(clock)),
     ):
-        result = manager.capture_seconds(0.2)
+        result = manager.capture_seconds(0.05)
 
-    assert result["count"] == 0
+    assert result["count"] == 0  # the deadline, not a sample count, ended it
 
 
-def test_capture_rejects_nonpositive(manager: BoardManager) -> None:
+def test_capture_rejects_nonpositive(
+    stack: tuple[BoardManager, TransportFactory],
+) -> None:
+    manager, _ = stack
     with pytest.raises(ValueError, match="positive"):
         manager.capture_samples(0)
     with pytest.raises(ValueError, match="positive"):
         manager.capture_seconds(0.0)
 
 
-def test_capture_requires_connection(tmp_path: Path) -> None:
-    with (
-        mock.patch("benchweave.web.board.AdcDriver", _CaptureDriver),
-        mock.patch("benchweave.web.board.save_config"),
-    ):
-        m = BoardManager()
-
+def test_capture_requires_connection() -> None:
+    manager = BoardManager()
     with pytest.raises(RuntimeError, match="no ADC board connected"):
-        m.capture_samples(3)
+        manager.capture_samples(3)
 
 
-def test_capture_skips_failed_computed_channel(manager: BoardManager, tmp_path: Path) -> None:
+def test_capture_skips_failed_computed_channel(
+    stack: tuple[BoardManager, TransportFactory], tmp_path: Path
+) -> None:
+    manager, factory = stack
     manager._config["profiles"]["default"]["computed"] = [
         {"name": "Bad", "unit": "A", "expr": "A0/0", "show": True}
     ]
-    _driver_of(manager).samples = iter(_samples(3))
+    factory.last.set_samples(_samples(3))
     with mock.patch("benchweave.web.board.capture_dir", return_value=tmp_path):
         result = manager.capture_samples(3)
 
@@ -166,10 +149,13 @@ def test_capture_skips_failed_computed_channel(manager: BoardManager, tmp_path: 
     assert keys  # physical channels still summarized
 
 
-def test_capture_deduplicates_colliding_column_names(manager: BoardManager, tmp_path: Path) -> None:
+def test_capture_deduplicates_colliding_column_names(
+    stack: tuple[BoardManager, TransportFactory], tmp_path: Path
+) -> None:
     # A raw channel and a computed channel share the display label "dup" — the
     # fix must make the CSV columns (and the summary) unique without renaming the
     # profile's labels.
+    manager, factory = stack
     profile = manager._config["profiles"]["default"]
     profile["channels"] = {
         key: {"name": key, "unit": "V", "gain": 0.001, "offset": 0.0, "show": True}
@@ -179,12 +165,14 @@ def test_capture_deduplicates_colliding_column_names(manager: BoardManager, tmp_
     profile["computed"] = [{"name": "dup", "unit": "V", "expr": "A2 * 2", "show": True}]
     manager._config["active_profile"] = "default"
 
-    _driver_of(manager).samples = iter(_samples(2))
+    factory.last.set_samples(_samples(2))
     with mock.patch("benchweave.web.board.capture_dir", return_value=tmp_path):
         result = manager.capture_samples(2)
 
     path = Path(cast(str, result["path"]))
-    header = next(line for line in path.read_text().splitlines() if not line.startswith("#"))
+    header = next(
+        line for line in path.read_text().splitlines() if not line.startswith("#")
+    )
     columns = header.split(",")
     assert "dup" in columns
     assert "dup (computed)" in columns
@@ -195,14 +183,15 @@ def test_capture_deduplicates_colliding_column_names(manager: BoardManager, tmp_
     assert len(names) == len(set(names))  # summary names unique too
 
 
-def test_sample_once_returns_converted_sample(manager: BoardManager) -> None:
-    manager._driver.sample_once = mock.Mock(  # type: ignore[method-assign]
-        return_value=Sample(counter=9, channels=(0, 1, 2, 3, 4, 5), averaged_n=0)
-    )
+def test_sample_once_returns_converted_sample(
+    stack: tuple[BoardManager, TransportFactory],
+) -> None:
+    manager, factory = stack
+    factory.last.set_samples([(9, (0, 1, 2, 3, 4, 5))])
     result = manager.sample_once()
 
     channels = cast(list[dict[str, object]], result["channels"])
-    assert result["counter"] == 9
+    assert result["counter"] == 9  # single-shot keeps the firmware counter
     assert result["averaged_n"] == 0
     assert channels
     assert all("name" in c and "value" in c for c in channels)
