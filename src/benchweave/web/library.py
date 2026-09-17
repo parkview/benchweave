@@ -25,9 +25,7 @@ from plugins.adc_6ch_12bit.config import CHANNEL_KEYS, DEFAULT_CONFIG, PALETTE, 
 from plugins.adc_6ch_12bit.discovery import capture_dir
 
 # adc_<serial>[_<tag>]_<YYYYmmdd_HHMMSS>.<ext>
-_STEM_RE = re.compile(
-    r"^adc_(?P<serial>[^_]+?)(?:_(?P<tag>[^_]+))?_(?P<stamp>\d{8}_\d{6})$"
-)
+_STEM_RE = re.compile(r"^adc_(?P<serial>[^_]+?)(?:_(?P<tag>[^_]+))?_(?P<stamp>\d{8}_\d{6})$")
 _PHYSICAL_LINE = re.compile(r"^(.*?)\s*\(([^)]*)\)$")
 _COMPUTED_LINE = re.compile(r"^(.*?)\s*\(([^)]*)\)\s*=\s*(.*)$")
 _FILE_SUFFIXES = (".csv", ".png", ".html")
@@ -62,9 +60,7 @@ class CaptureLibrary:
 
     def __init__(self, db_path: Path | None = None, captures_dir: Path | None = None) -> None:
         self._captures_dir = captures_dir if captures_dir is not None else capture_dir()
-        self._db_path = (
-            db_path if db_path is not None else self._captures_dir.parent / "library.db"
-        )
+        self._db_path = db_path if db_path is not None else self._captures_dir.parent / "library.db"
         self._lock = threading.Lock()
         self._init_db()
 
@@ -105,17 +101,14 @@ class CaptureLibrary:
                     "json TEXT NOT NULL, saved_at TEXT NOT NULL)"
                 )
                 conn.execute(
-                    "CREATE TABLE IF NOT EXISTS settings ("
-                    "key TEXT PRIMARY KEY, value TEXT)"
+                    "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)"
                 )
                 # WAL is persistent: readers and the sibling MCP process no
                 # longer block a writer wholesale.
                 conn.execute("PRAGMA journal_mode = WAL")
                 # Additive migration: captures.missing_since marks rows whose
                 # files are currently absent from disk (see _reconcile).
-                columns = {
-                    row["name"] for row in conn.execute("PRAGMA table_info(captures)")
-                }
+                columns = {row["name"] for row in conn.execute("PRAGMA table_info(captures)")}
                 if "missing_since" not in columns:
                     conn.execute("ALTER TABLE captures ADD COLUMN missing_since TEXT")
         finally:
@@ -132,9 +125,7 @@ class CaptureLibrary:
         if not self._captures_dir.exists():
             return []
         return sorted(
-            p
-            for p in self._captures_dir.iterdir()
-            if p.is_file() and p.suffix in _FILE_SUFFIXES
+            p for p in self._captures_dir.iterdir() if p.is_file() and p.suffix in _FILE_SUFFIXES
         )
 
     @staticmethod
@@ -184,9 +175,7 @@ class CaptureLibrary:
                 rows = conn.execute(
                     "SELECT name, retention_days FROM projects ORDER BY name"
                 ).fetchall()
-            return [
-                {"name": r["name"], "retention_days": r["retention_days"]} for r in rows
-            ]
+            return [{"name": r["name"], "retention_days": r["retention_days"]} for r in rows]
         finally:
             conn.close()
 
@@ -317,9 +306,7 @@ class CaptureLibrary:
         conn = self._connect()
         try:
             with self._lock, conn:
-                row = conn.execute(
-                    "SELECT value FROM settings WHERE key = ?", (key,)
-                ).fetchone()
+                row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
         finally:
             conn.close()
         return row["value"] if row else default
@@ -404,14 +391,10 @@ class CaptureLibrary:
                         "rails": state["rails"],
                         "source": "capture",
                     }
-                for r in conn.execute(
-                    "SELECT json FROM power_analysis ORDER BY saved_at DESC"
-                ):
+                for r in conn.execute("SELECT json FROM power_analysis ORDER BY saved_at DESC"):
                     state = self._decode_power(r["json"])
                     rails = cast(list[dict[str, str | None]], state["rails"])
-                    rail_names = {
-                        n for rail in rails for n in (rail["v"], rail["i"]) if n
-                    }
+                    rail_names = {n for rail in rails for n in (rail["v"], rail["i"]) if n}
                     if rail_names and rail_names <= names:
                         return {
                             "mode": state["mode"],
@@ -499,9 +482,7 @@ class CaptureLibrary:
             return []
         return self._clean_assertions(cast(list[dict[str, object]], data))
 
-    def set_assertions(
-        self, items: list[dict[str, object]]
-    ) -> list[dict[str, object]]:
+    def set_assertions(self, items: list[dict[str, object]]) -> list[dict[str, object]]:
         """Replace the global assertions with the validated list (unique
         names, at least one finite bound each) and return what was stored."""
         cleaned = self._clean_assertions(items)
@@ -617,9 +598,7 @@ class CaptureLibrary:
         finally:
             conn.close()
 
-        global_retention = (
-            load_config().get("settings", {}).get("retention_days")
-        )
+        global_retention = load_config().get("settings", {}).get("retention_days")
         now = datetime.now()
 
         records: list[dict[str, object]] = []
@@ -628,9 +607,7 @@ class CaptureLibrary:
             if captured is None:
                 captured = datetime.fromtimestamp(path.stat().st_mtime)
             project = assigned.get(path.stem)
-            retention = (
-                projects.get(project) if project is not None else global_retention
-            )
+            retention = projects.get(project) if project is not None else global_retention
             records.append(
                 {
                     "stem": path.stem,
@@ -706,8 +683,7 @@ class CaptureLibrary:
             stem
             for stem in set(stems)
             if not any(
-                (self._captures_dir / f"{stem}{suffix}").is_file()
-                for suffix in _FILE_SUFFIXES
+                (self._captures_dir / f"{stem}{suffix}").is_file() for suffix in _FILE_SUFFIXES
             )
         )
         if gone:
@@ -715,9 +691,7 @@ class CaptureLibrary:
             try:
                 with self._lock, conn:
                     conn.execute(
-                        "DELETE FROM captures WHERE stem IN ("
-                        + ",".join("?" for _ in gone)
-                        + ")",
+                        "DELETE FROM captures WHERE stem IN (" + ",".join("?" for _ in gone) + ")",
                         tuple(gone),
                     )
             finally:
@@ -737,9 +711,7 @@ class CaptureLibrary:
 
     def _read_metadata(self, path: Path) -> tuple[dict[str, str], list[dict[str, str]]]:
         """Return (scalar metadata, channel descriptors) from the ``#`` header."""
-        return self._metadata_from_lines(
-            path.read_text(encoding="utf-8").splitlines()
-        )
+        return self._metadata_from_lines(path.read_text(encoding="utf-8").splitlines())
 
     @staticmethod
     def _metadata_from_lines(
@@ -790,9 +762,7 @@ class CaptureLibrary:
         lines = path.read_text(encoding="utf-8").splitlines()
         scalars, descs = self._metadata_from_lines(lines)
 
-        data_lines = [
-            line for line in lines if line and not line.startswith("#")
-        ]
+        data_lines = [line for line in lines if line and not line.startswith("#")]
         if not data_lines:
             return {
                 "name": path.name,
@@ -879,9 +849,7 @@ class CaptureLibrary:
         return self._reconstruct_config(scalars, descs)
 
     @staticmethod
-    def _reconstruct_config(
-        scalars: dict[str, str], descs: list[dict[str, str]]
-    ) -> dict[str, Any]:
+    def _reconstruct_config(scalars: dict[str, str], descs: list[dict[str, str]]) -> dict[str, Any]:
         default_channel = DEFAULT_CONFIG["profiles"]["default"]["channels"]
         channels: dict[str, Any] = {}
         for key in CHANNEL_KEYS:
