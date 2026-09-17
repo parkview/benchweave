@@ -205,14 +205,10 @@ class SerialHostServices:
         if kind == "stream_exchange":
             data = bytes(transaction.get("data", b""))
             await loop.run_in_executor(None, self._link.write, data)
-            received = await loop.run_in_executor(
-                None, self._link.read_available, max_bytes, wait
-            )
+            received = await loop.run_in_executor(None, self._link.read_available, max_bytes, wait)
             return {"data": received}
         if kind == "stream_receive":
-            received = await loop.run_in_executor(
-                None, self._link.read_available, max_bytes, wait
-            )
+            received = await loop.run_in_executor(None, self._link.read_available, max_bytes, wait)
             return {"data": received}
         raise ValueError(f"unsupported transaction kind: {kind!r}")
 

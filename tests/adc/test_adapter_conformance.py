@@ -161,9 +161,9 @@ def test_capture_sequence_configure_arm_events_fetch_abort() -> None:
         ]
     )
 
-    async def scenario() -> (
-        tuple[dict[str, Any], dict[str, Any] | None, dict[str, Any], dict[str, Any]]
-    ):
+    async def scenario() -> tuple[
+        dict[str, Any], dict[str, Any] | None, dict[str, Any], dict[str, Any]
+    ]:
         adapter = await _open_adapter(host)
 
         configure = await check_operation(
@@ -182,9 +182,7 @@ def test_capture_sequence_configure_arm_events_fetch_abort() -> None:
         )
         assert arm["data"]["result"]["state"] == "running"
 
-        event = await adapter.next_event(
-            "acq-1", MockContext("op-event", deadline_monotonic=10.0)
-        )
+        event = await adapter.next_event("acq-1", MockContext("op-event", deadline_monotonic=10.0))
         fetch = await check_operation(
             adapter,
             _invoke_request(
@@ -304,9 +302,7 @@ def test_nak_is_device_rejected_with_dispatched_state() -> None:
 
 
 def test_post_dispatch_transport_loss_reports_unknown() -> None:
-    host = MockHost(
-        [(_exchange(protocol.FrameType.RESET, 0), ConnectionError("cable pulled"))]
-    )
+    host = MockHost([(_exchange(protocol.FrameType.RESET, 0), ConnectionError("cable pulled"))])
 
     async def scenario() -> dict[str, Any]:
         adapter = await _open_adapter(host)
@@ -514,9 +510,7 @@ def test_unknown_subscription_is_silent() -> None:
 
     async def scenario() -> dict[str, Any] | None:
         adapter = await _open_adapter(host)
-        return await adapter.next_event(
-            "nobody", MockContext("op-n", deadline_monotonic=10.0)
-        )
+        return await adapter.next_event("nobody", MockContext("op-n", deadline_monotonic=10.0))
 
     assert asyncio.run(scenario()) is None
     assert host.transfers == []

@@ -170,9 +170,7 @@ def test_capture_deduplicates_colliding_column_names(
         result = manager.capture_samples(2)
 
     path = Path(cast(str, result["path"]))
-    header = next(
-        line for line in path.read_text().splitlines() if not line.startswith("#")
-    )
+    header = next(line for line in path.read_text().splitlines() if not line.startswith("#"))
     columns = header.split(",")
     assert "dup" in columns
     assert "dup (computed)" in columns

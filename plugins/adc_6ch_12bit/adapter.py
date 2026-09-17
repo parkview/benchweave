@@ -54,9 +54,7 @@ class _Services(Protocol):
 
     def utc_now(self) -> str: ...
 
-    async def transfer(
-        self, transaction: dict[str, Any], context: Any
-    ) -> dict[str, Any]: ...
+    async def transfer(self, transaction: dict[str, Any], context: Any) -> dict[str, Any]: ...
 
     async def close_transport(self, context: Any) -> None: ...
 
@@ -117,9 +115,7 @@ class AdcAdapter:
 
     # -- lifecycle -----------------------------------------------------------
 
-    async def open(
-        self, descriptor: dict[str, Any], services: Any, context: Any
-    ) -> None:
+    async def open(self, descriptor: dict[str, Any], services: Any, context: Any) -> None:
         """Bind descriptor and services; deliberately free of device I/O."""
         self._descriptor = descriptor
         self._services = services
@@ -218,8 +214,10 @@ class AdcAdapter:
             raise _OperationError("error", "DEVICE_REJECTED", message, "dispatched")
         if response.type != protocol.FrameType.IDENTIFY_RSP:
             raise _OperationError(
-                "error", "PROTOCOL_ERROR",
-                f"unexpected response type {response.type:#x}", "dispatched",
+                "error",
+                "PROTOCOL_ERROR",
+                f"unexpected response type {response.type:#x}",
+                "dispatched",
             )
         try:
             info = protocol.parse_identify(response.payload)
@@ -236,9 +234,7 @@ class AdcAdapter:
         }
 
     async def _reset(self, context: Any) -> dict[str, Any]:
-        self._expect_ack(
-            await self._transact(protocol.FrameType.RESET, b"", context), "RESET"
-        )
+        self._expect_ack(await self._transact(protocol.FrameType.RESET, b"", context), "RESET")
         self._acquisitions.clear()
         self._active_acquisition = None
         return {"acknowledged": True}
@@ -277,8 +273,10 @@ class AdcAdapter:
             channel = str(entry.get("channel", ""))
             if channel not in CHANNEL_IDS:
                 raise _OperationError(
-                    "error", "INVALID_ARGUMENT",
-                    f"unknown channel: {channel!r}", "not_dispatched",
+                    "error",
+                    "INVALID_ARGUMENT",
+                    f"unknown channel: {channel!r}",
+                    "not_dispatched",
                 )
             mask |= 1 << CHANNEL_IDS.index(channel)
         requested_rate = float(action_input["sample_rate_hz"])
@@ -288,8 +286,10 @@ class AdcAdapter:
         if trigger_kind not in ("immediate", "software"):
             # The firmware's external-trigger path is reserved, unimplemented.
             raise _OperationError(
-                "error", "UNSUPPORTED",
-                f"trigger kind not supported: {trigger_kind}", "not_dispatched",
+                "error",
+                "UNSUPPORTED",
+                f"trigger kind not supported: {trigger_kind}",
+                "not_dispatched",
             )
         averaging, achieved_rate = _nearest_averaging(requested_rate, mask.bit_count())
 
@@ -329,8 +329,10 @@ class AdcAdapter:
         configuration = self._configurations.get(configuration_id)
         if configuration is None:
             raise _OperationError(
-                "error", "INVALID_ARGUMENT",
-                f"unknown configuration: {configuration_id}", "not_dispatched",
+                "error",
+                "INVALID_ARGUMENT",
+                f"unknown configuration: {configuration_id}",
+                "not_dispatched",
             )
         acquisition = _Acquisition(
             configuration_id=configuration_id,
@@ -348,8 +350,10 @@ class AdcAdapter:
         acquisition = self._acquisitions.get(acquisition_id)
         if acquisition is None:
             raise _OperationError(
-                "error", "INVALID_ARGUMENT",
-                f"unknown acquisition: {acquisition_id}", "not_dispatched",
+                "error",
+                "INVALID_ARGUMENT",
+                f"unknown acquisition: {acquisition_id}",
+                "not_dispatched",
             )
         if acquisition.state == "armed":
             configuration = self._configurations[acquisition.configuration_id]
@@ -376,8 +380,10 @@ class AdcAdapter:
         acquisition = self._acquisitions.get(acquisition_id)
         if acquisition is None:
             raise _OperationError(
-                "error", "INVALID_ARGUMENT",
-                f"unknown acquisition: {acquisition_id}", "not_dispatched",
+                "error",
+                "INVALID_ARGUMENT",
+                f"unknown acquisition: {acquisition_id}",
+                "not_dispatched",
             )
         if acquisition.state == "running":
             self._expect_ack(
@@ -396,8 +402,10 @@ class AdcAdapter:
         acquisition = self._acquisitions.get(acquisition_id)
         if acquisition is None:
             raise _OperationError(
-                "error", "INVALID_ARGUMENT",
-                f"unknown acquisition: {acquisition_id}", "not_dispatched",
+                "error",
+                "INVALID_ARGUMENT",
+                f"unknown acquisition: {acquisition_id}",
+                "not_dispatched",
             )
         configuration = self._configurations[acquisition.configuration_id]
         if acquisition.state == "running":
@@ -414,7 +422,8 @@ class AdcAdapter:
                 # Nothing was consumed: everything stays fetchable.
                 acquisition.samples.extend(samples)
                 raise _OperationError(
-                    "error", "RESOURCE_LIMIT",
+                    "error",
+                    "RESOURCE_LIMIT",
                     f"{len(samples)} samples exceed max_bytes={max_bytes}; "
                     "re-fetch with allow_partial or a larger budget",
                     "not_dispatched",
@@ -446,8 +455,7 @@ class AdcAdapter:
                     "dtype": "float64",
                     "dimensions": ["sample_index"],
                     "values": [
-                        float(channels[CHANNEL_IDS.index(channel)])
-                        for _, channels in samples
+                        float(channels[CHANNEL_IDS.index(channel)]) for _, channels in samples
                     ],
                     "uncertainty": {"status": "unknown"},
                     "calibration": {"status": "not_applied"},
@@ -513,9 +521,7 @@ class AdcAdapter:
     def _guard(self, context: Any) -> None:
         services = self._require_services()
         if context.is_cancelled():
-            raise _OperationError(
-                "cancelled", "CANCELLED", "operation cancelled", "not_dispatched"
-            )
+            raise _OperationError("cancelled", "CANCELLED", "operation cancelled", "not_dispatched")
         if services.monotonic() >= context.deadline_monotonic:
             raise _OperationError(
                 "error", "TIMEOUT", "deadline expired before dispatch", "not_dispatched"
@@ -558,9 +564,7 @@ class AdcAdapter:
             ) from exc
         return reply
 
-    def _route_frames(
-        self, data: bytes, pending: protocol.FrameType
-    ) -> protocol.Frame | None:
+    def _route_frames(self, data: bytes, pending: protocol.FrameType) -> protocol.Frame | None:
         """Feed received bytes to the parser; buffer samples, match the reply."""
         reply: protocol.Frame | None = None
         for frame in self._parser.feed(data):
@@ -617,8 +621,10 @@ class AdcAdapter:
             raise _OperationError("error", "DEVICE_REJECTED", message, "dispatched")
         if response.type != protocol.FrameType.ACK:
             raise _OperationError(
-                "error", "PROTOCOL_ERROR",
-                f"unexpected response type {response.type:#x} for {command}", "dispatched",
+                "error",
+                "PROTOCOL_ERROR",
+                f"unexpected response type {response.type:#x} for {command}",
+                "dispatched",
             )
 
     @staticmethod

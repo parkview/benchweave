@@ -299,9 +299,7 @@ class BoardManager:
             "verb": verb,
             "arguments": arguments,
         }
-        result = self._submit(
-            adapter.execute(request, context), timeout_s + _SUBMIT_MARGIN_S
-        )
+        result = self._submit(adapter.execute(request, context), timeout_s + _SUBMIT_MARGIN_S)
         if result.get("status") != "ok":
             error = cast(dict[str, Any], result.get("error") or {})
             code = error.get("code", "ERROR")
@@ -383,9 +381,7 @@ class BoardManager:
             self._adapter = adapter
             try:
                 self._submit(
-                    adapter.open(
-                        _DESCRIPTOR, services, self._context("open", _IDENTIFY_TIMEOUT_S)
-                    ),
+                    adapter.open(_DESCRIPTOR, services, self._context("open", _IDENTIFY_TIMEOUT_S)),
                     _IDENTIFY_TIMEOUT_S + _SUBMIT_MARGIN_S,
                 )
                 info = self._run_operation("identify", {}, _IDENTIFY_TIMEOUT_S)
@@ -924,9 +920,7 @@ class BoardManager:
                 future.result(timeout=2.0)
             future.cancel()
 
-    async def _stream_pump(
-        self, acquisition_id: str, context: AdcOperationContext
-    ) -> None:
+    async def _stream_pump(self, acquisition_id: str, context: AdcOperationContext) -> None:
         """Long-running sample pump; runs on the host loop until cancelled."""
         adapter = self._adapter
         if adapter is None:

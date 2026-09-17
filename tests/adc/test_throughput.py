@@ -108,9 +108,7 @@ def test_bulk_sample_chunk_arrives_in_order_without_io_amplification(
             counters.append(int(event["x-adc-sample"]["counter"]))
         transfers_during = services.transfers - transfers_before
 
-        await _invoke(
-            adapter, "op-abort", "otdp.daq.abort/1.0.0", {"acquisition_id": "acq-bulk"}
-        )
+        await _invoke(adapter, "op-abort", "otdp.daq.abort/1.0.0", {"acquisition_id": "acq-bulk"})
         await adapter.close(_context("close"))
         return counters, transfers_during
 

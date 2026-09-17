@@ -76,11 +76,11 @@ dedicated event loop:
 from benchweave.web.board import BoardManager
 from plugins.adc_6ch_12bit import discover_adc_boards
 
-boards = discover_adc_boards()        # probe serial ports with IDENTIFY
+boards = discover_adc_boards()  # probe serial ports with IDENTIFY
 manager = BoardManager()
-manager.connect(boards[0].device)     # open + identify + restore channels
+manager.connect(boards[0].device)  # open + identify + restore channels
 manager.set_averaging(16)
-print(manager.capture_seconds(5.0))   # CSV + per-channel summary
+print(manager.capture_seconds(5.0))  # CSV + per-channel summary
 manager.disconnect()
 ```
 

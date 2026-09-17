@@ -116,9 +116,7 @@ def test_link_read_timeout_returns_empty(link: SerialLink) -> None:
     assert time.monotonic() - start >= 0.04
 
 
-def test_link_write_fault_flips_faulted(
-    transport: ScriptedTransport, link: SerialLink
-) -> None:
+def test_link_write_fault_flips_faulted(transport: ScriptedTransport, link: SerialLink) -> None:
     transport.fail_writes = True
     with pytest.raises(ConnectionError):
         link.write(b"x")
@@ -127,9 +125,7 @@ def test_link_write_fault_flips_faulted(
         link.read_available(1, 0.1)
 
 
-def test_link_read_fault_wakes_waiters(
-    transport: ScriptedTransport, link: SerialLink
-) -> None:
+def test_link_read_fault_wakes_waiters(transport: ScriptedTransport, link: SerialLink) -> None:
     transport.fail_reads = True
     with pytest.raises(ConnectionError):
         # The reader thread faults; the bounded wait must not run its course.
@@ -139,9 +135,7 @@ def test_link_read_fault_wakes_waiters(
         link.write(b"x")
 
 
-def test_link_overflow_drops_oldest_bytes(
-    transport: ScriptedTransport, link: SerialLink
-) -> None:
+def test_link_overflow_drops_oldest_bytes(transport: ScriptedTransport, link: SerialLink) -> None:
     transport.feed(b"x" * RING_CAPACITY)
     transport.feed(b"y" * 16)
     _wait_consumed(transport)
@@ -150,9 +144,7 @@ def test_link_overflow_drops_oldest_bytes(
     assert data.endswith(b"y" * 16)  # the newest bytes survive
 
 
-def test_link_close_raises_for_late_users(
-    transport: ScriptedTransport, link: SerialLink
-) -> None:
+def test_link_close_raises_for_late_users(transport: ScriptedTransport, link: SerialLink) -> None:
     link.close()
     assert not transport.is_open
     with pytest.raises(ConnectionError):
@@ -195,9 +187,7 @@ def test_transfer_exchange_writes_then_reads(
     _wait_consumed(transport)
 
     result = asyncio.run(
-        services.transfer(
-            {"kind": "stream_exchange", "data": b"cmd", "max_bytes": 64}, _context()
-        )
+        services.transfer({"kind": "stream_exchange", "data": b"cmd", "max_bytes": 64}, _context())
     )
     assert result["data"] == b"device-reply"
     assert transport.written == [b"cmd"]
@@ -210,9 +200,7 @@ def test_transfer_receive_reads_without_writing(
     transport.feed(b"unsolicited")
     _wait_consumed(transport)
 
-    result = asyncio.run(
-        services.transfer({"kind": "stream_receive", "max_bytes": 64}, _context())
-    )
+    result = asyncio.run(services.transfer({"kind": "stream_receive", "max_bytes": 64}, _context()))
     assert result["data"] == b"unsolicited"
     assert transport.written == []
 
@@ -243,26 +231,18 @@ def test_transfer_rejects_bad_transactions(link: SerialLink, tmp_path: Path) -> 
     with pytest.raises(ValueError, match="unsupported transaction kind"):
         asyncio.run(services.transfer({"kind": "dma", "max_bytes": 16}, _context()))
     with pytest.raises(ValueError, match="max_bytes must be positive"):
-        asyncio.run(
-            services.transfer({"kind": "stream_receive", "max_bytes": 0}, _context())
-        )
+        asyncio.run(services.transfer({"kind": "stream_receive", "max_bytes": 0}, _context()))
 
 
-def test_transfer_refuses_cancelled_or_expired_context(
-    link: SerialLink, tmp_path: Path
-) -> None:
+def test_transfer_refuses_cancelled_or_expired_context(link: SerialLink, tmp_path: Path) -> None:
     services = _services(link, tmp_path)
     cancelled = _context()
     cancelled.cancel()
     with pytest.raises(TimeoutError):
-        asyncio.run(
-            services.transfer({"kind": "stream_receive", "max_bytes": 16}, cancelled)
-        )
+        asyncio.run(services.transfer({"kind": "stream_receive", "max_bytes": 16}, cancelled))
     expired = AdcOperationContext("op-late", time.monotonic() - 1.0)
     with pytest.raises(TimeoutError):
-        asyncio.run(
-            services.transfer({"kind": "stream_receive", "max_bytes": 16}, expired)
-        )
+        asyncio.run(services.transfer({"kind": "stream_receive", "max_bytes": 16}, expired))
 
 
 def test_close_transport_closes_the_link(
@@ -287,9 +267,7 @@ def test_record_evidence_appends_json_lines(link: SerialLink, tmp_path: Path) ->
     assert '"kind":"probe"' in lines[0]
 
 
-def test_record_evidence_is_a_noop_without_a_path(
-    link: SerialLink, tmp_path: Path
-) -> None:
+def test_record_evidence_is_a_noop_without_a_path(link: SerialLink, tmp_path: Path) -> None:
     services = _services(link, tmp_path)
     asyncio.run(services.record_evidence({"kind": "probe"}, _context()))
     assert list(tmp_path.iterdir()) == []
