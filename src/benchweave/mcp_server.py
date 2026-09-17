@@ -139,8 +139,7 @@ def list_captures(limit: int = 20) -> list[dict[str, object]]:
         kinds[stem].add(str(r.get("kind")))
         sizes[stem] += cast(int, r.get("size_bytes"))
     rows = [
-        {**info[stem], "size_bytes": sizes[stem], "kinds": sorted(kinds[stem])}
-        for stem in order
+        {**info[stem], "size_bytes": sizes[stem], "kinds": sorted(kinds[stem])} for stem in order
     ]
     return rows[:limit] if limit > 0 else rows
 

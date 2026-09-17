@@ -181,9 +181,7 @@ def test_stream_worker_decimates_to_sample_rate() -> None:
             pass
 
     manager._recorder = _SpyRecorder()  # type: ignore[assignment]
-    samples = [
-        Sample(counter=i, channels=(0, 0, 0, 0, 0, 0), averaged_n=0) for i in range(5)
-    ]
+    samples = [Sample(counter=i, channels=(0, 0, 0, 0, 0, 0), averaged_n=0) for i in range(5)]
     clock = iter([0.5, 0.75, 1.0, 1.25, 1.5])
     with (
         mock.patch.object(manager._driver, "iter_samples", return_value=iter(samples)),

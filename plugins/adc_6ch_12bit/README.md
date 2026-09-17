@@ -70,10 +70,10 @@ the SSE display would start to matter; downsample in the worker thread instead.
 ```python
 from plugins.adc_6ch_12bit import AdcDriver, discover_adc_boards
 
-boards = discover_adc_boards()      # probe serial ports with IDENTIFY
+boards = discover_adc_boards()  # probe serial ports with IDENTIFY
 driver = AdcDriver()
-driver.open(boards[0].device)       # 2 Mbps
-info = driver.identify()            # proto, firmware, channels, resolution
+driver.open(boards[0].device)  # 2 Mbps
+info = driver.identify()  # proto, firmware, channels, resolution
 driver.set_averaging(16)
 driver.start_stream()
 for sample in driver.iter_samples():

@@ -60,9 +60,7 @@ def manager() -> Iterator[BoardManager]:
 
 
 def _samples(n: int) -> list[Sample]:
-    return [
-        Sample(counter=i, channels=(i, 1, 2, 3, 4, 5), averaged_n=0) for i in range(n)
-    ]
+    return [Sample(counter=i, channels=(i, 1, 2, 3, 4, 5), averaged_n=0) for i in range(n)]
 
 
 def test_capture_samples_returns_n_and_writes_tagged_csv(
@@ -86,9 +84,7 @@ def test_capture_samples_returns_n_and_writes_tagged_csv(
     assert len(data_rows) == 4  # header row + 3 samples
 
 
-def test_capture_samples_without_tag_omits_mcp(
-    manager: BoardManager, tmp_path: Path
-) -> None:
+def test_capture_samples_without_tag_omits_mcp(manager: BoardManager, tmp_path: Path) -> None:
     _driver_of(manager).samples = iter(_samples(1))
     with mock.patch("benchweave.web.board.capture_dir", return_value=tmp_path):
         result = manager.capture_samples(1)
@@ -96,9 +92,7 @@ def test_capture_samples_without_tag_omits_mcp(
     assert "MCP" not in Path(cast(str, result["path"])).name
 
 
-def test_capture_samples_raises_when_not_enough(
-    manager: BoardManager, tmp_path: Path
-) -> None:
+def test_capture_samples_raises_when_not_enough(manager: BoardManager, tmp_path: Path) -> None:
     _driver_of(manager).samples = iter(_samples(1))
     with (
         mock.patch("benchweave.web.board.capture_dir", return_value=tmp_path),
@@ -158,9 +152,7 @@ def test_capture_requires_connection(tmp_path: Path) -> None:
         m.capture_samples(3)
 
 
-def test_capture_skips_failed_computed_channel(
-    manager: BoardManager, tmp_path: Path
-) -> None:
+def test_capture_skips_failed_computed_channel(manager: BoardManager, tmp_path: Path) -> None:
     manager._config["profiles"]["default"]["computed"] = [
         {"name": "Bad", "unit": "A", "expr": "A0/0", "show": True}
     ]
@@ -174,9 +166,7 @@ def test_capture_skips_failed_computed_channel(
     assert keys  # physical channels still summarized
 
 
-def test_capture_deduplicates_colliding_column_names(
-    manager: BoardManager, tmp_path: Path
-) -> None:
+def test_capture_deduplicates_colliding_column_names(manager: BoardManager, tmp_path: Path) -> None:
     # A raw channel and a computed channel share the display label "dup" — the
     # fix must make the CSV columns (and the summary) unique without renaming the
     # profile's labels.
@@ -194,9 +184,7 @@ def test_capture_deduplicates_colliding_column_names(
         result = manager.capture_samples(2)
 
     path = Path(cast(str, result["path"]))
-    header = next(
-        line for line in path.read_text().splitlines() if not line.startswith("#")
-    )
+    header = next(line for line in path.read_text().splitlines() if not line.startswith("#"))
     columns = header.split(",")
     assert "dup" in columns
     assert "dup (computed)" in columns

@@ -27,8 +27,9 @@ def _port(device: str, vid: int | None, serial: str = "SERIAL") -> SimpleNamespa
 
 
 def test_discover_filters_by_vendor_and_probes() -> None:
-    with mock.patch("serial.tools.list_ports.comports") as comports, mock.patch(
-        "plugins.adc_6ch_12bit.discovery.AdcDriver", _FakeDriver
+    with (
+        mock.patch("serial.tools.list_ports.comports") as comports,
+        mock.patch("plugins.adc_6ch_12bit.discovery.AdcDriver", _FakeDriver),
     ):
         comports.return_value = [
             _port("/dev/ttyACM2", WCH_VENDOR_ID),  # the ADC board
@@ -44,8 +45,9 @@ def test_discover_filters_by_vendor_and_probes() -> None:
 
 
 def test_discover_returns_empty_when_no_board() -> None:
-    with mock.patch("serial.tools.list_ports.comports") as comports, mock.patch(
-        "plugins.adc_6ch_12bit.discovery.AdcDriver", _FakeDriver
+    with (
+        mock.patch("serial.tools.list_ports.comports") as comports,
+        mock.patch("plugins.adc_6ch_12bit.discovery.AdcDriver", _FakeDriver),
     ):
         comports.return_value = [
             _port("/dev/ttyACM3", WCH_VENDOR_ID),  # WCH but not an ADC board

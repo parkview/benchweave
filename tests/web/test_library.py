@@ -307,9 +307,7 @@ def test_power_clean_invalid(library: CaptureLibrary) -> None:
 
 
 def test_power_reuse_by_matching_names(library: CaptureLibrary) -> None:
-    library.set_power(
-        STEM, {"mode": "load-step", "rails": [{"v": "Voltage", "i": "Current"}]}
-    )
+    library.set_power(STEM, {"mode": "load-step", "rails": [{"v": "Voltage", "i": "Current"}]})
 
     stem2 = "adc_5678_test2_20260914_130000"
     (library._captures_dir / f"{stem2}.csv").write_text(CSV)
@@ -323,9 +321,7 @@ def test_power_reuse_by_matching_names(library: CaptureLibrary) -> None:
 
 
 def test_power_reuse_skips_unmatched_names(library: CaptureLibrary) -> None:
-    library.set_power(
-        STEM, {"mode": "sleep", "rails": [{"v": "3V3", "i": "mA"}]}
-    )
+    library.set_power(STEM, {"mode": "sleep", "rails": [{"v": "3V3", "i": "mA"}]})
 
     stem2 = "adc_5678_test2_20260914_130000"
     (library._captures_dir / f"{stem2}.csv").write_text(CSV)
@@ -346,9 +342,7 @@ def test_power_default_mode_invalid_falls_back(library: CaptureLibrary) -> None:
 
 
 def test_power_pruned_when_capture_deleted(library: CaptureLibrary) -> None:
-    library.set_power(
-        STEM, {"mode": "sleep", "rails": [{"v": "Voltage", "i": "Current"}]}
-    )
+    library.set_power(STEM, {"mode": "sleep", "rails": [{"v": "Voltage", "i": "Current"}]})
     assert library.get_power(STEM)["source"] == "capture"
 
     (library._captures_dir / f"{STEM}.csv").unlink()
