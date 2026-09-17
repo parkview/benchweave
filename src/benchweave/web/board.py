@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 import csv
 import json
+import logging
 import queue
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from contextlib import suppress
@@ -26,11 +28,17 @@ from plugins.adc_6ch_12bit import (
     convert_channels,
     discover_adc_boards,
     estimate_max_sps,
+    evaluate_expr,
     load_config,
     output_channels,
     save_config,
     serial_for_device,
 )
+
+_LOG = logging.getLogger(__name__)
+
+#: Live SSE subscribers each hold a 2000-deep queue; cap how many exist.
+MAX_SUBSCRIBERS = 32
 
 
 class _Recorder:
@@ -43,13 +51,19 @@ class _Recorder:
         metadata: list[str],
     ) -> None:
         self.path = path
-        self._file = open(path, "w", newline="")  # noqa: SIM115 (held open for streaming)
-        for line in metadata:
-            self._file.write(f"# {line}\n")
-        self._writer = csv.writer(self._file)
-        self._writer.writerow(
-            ["timestamp", "elapsed_s", "actual_sps", "counter", "averaged_n", *column_names]
-        )
+        # noqa: SIM115 — held open for streaming writes
+        self._file = open(path, "w", newline="", encoding="utf-8")  # noqa: SIM115
+        try:
+            for line in metadata:
+                self._file.write(f"# {line}\n")
+            self._writer = csv.writer(self._file)
+            self._writer.writerow(
+                ["timestamp", "elapsed_s", "actual_sps", "counter", "averaged_n", *column_names]
+            )
+        except BaseException:
+            # A failed header write must not leak the open handle.
+            self._file.close()
+            raise
         self._t0 = time.monotonic()
         self._last_elapsed: float | None = None
 
@@ -84,15 +98,30 @@ class _Recorder:
 def _open_file_manager(path: str) -> None:
     """Open the user's file manager at ``path``, selecting it where supported."""
     target = Path(path)
+    if sys.platform == "win32":
+        if target.is_file():
+            subprocess.Popen(["explorer", "/select,", str(target)])
+        else:
+            subprocess.Popen(["explorer", str(target)])
+        return
+    if sys.platform == "darwin":
+        if target.is_file():
+            subprocess.Popen(["open", "-R", str(target)])
+        else:
+            subprocess.Popen(["open", str(target if target.is_dir() else target.parent)])
+        return
     dolphin = shutil.which("dolphin")
     if dolphin:
         if target.is_file():
             subprocess.Popen([dolphin, "--select", str(target)])
         else:
             subprocess.Popen([dolphin, str(target)])
-    else:
-        folder = target if target.is_dir() else target.parent
-        subprocess.Popen(["xdg-open", str(folder)])
+        return
+    folder = target if target.is_dir() else target.parent
+    opener = shutil.which("xdg-open")
+    if opener is None:
+        raise RuntimeError("no file manager available (install a desktop opener)")
+    subprocess.Popen([opener, str(folder)])
 
 
 class BoardManager:
@@ -118,6 +147,7 @@ class BoardManager:
         self._recorder: _Recorder | None = None
         self._record_path: str | None = None
         self._last_png_path: str | None = None
+        self._last_error: str | None = None
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -125,6 +155,12 @@ class BoardManager:
         self._loop = loop
 
     def discover(self) -> list[dict[str, object]]:
+        # Under the lock: probing candidate ports while a capture is running
+        # would disturb the active serial connection.
+        with self._lock:
+            return self._discover_locked()
+
+    def _discover_locked(self) -> list[dict[str, object]]:
         return [
             {
                 "device": board.device,
@@ -147,6 +183,7 @@ class BoardManager:
             self._fw_minor = info.fw_minor
             self._averaging = 0
             self._streaming = False
+            self._last_error = None
             # Re-apply the persisted channel selection to the freshly opened board.
             mask = self._persisted_channel_mask()
             self._driver.set_channels(mask)
@@ -181,6 +218,7 @@ class BoardManager:
             "paused": self._paused,
             "recording": self._recording,
             "record_path": self._record_path,
+            "last_error": self._last_error,
             "max_sps": round(estimate_max_sps(self._averaging, self._channel_mask.bit_count()), 1),
         }
 
@@ -190,6 +228,7 @@ class BoardManager:
         return self._config
 
     def set_config(self, config: dict[str, Any]) -> dict[str, Any]:
+        _validate_config(config)
         self._config = config
         save_config(config)
         return self._config
@@ -513,6 +552,8 @@ class BoardManager:
     # -- live stream fan-out -------------------------------------------------
 
     def subscribe(self) -> asyncio.Queue[Sample]:
+        if len(self._subscribers) >= MAX_SUBSCRIBERS:
+            raise RuntimeError("too many live-stream subscribers")
         queue: asyncio.Queue[Sample] = asyncio.Queue(maxsize=2000)
         self._subscribers.add(queue)
         return queue
@@ -543,8 +584,14 @@ class BoardManager:
                     )
                 if loop is not None:
                     loop.call_soon_threadsafe(self._publish, sample)
-        except Exception:
-            pass
+        except Exception as exc:
+            # A driver fault or CSV write failure used to vanish here while
+            # status() kept claiming streaming: log it, surface it, and stop
+            # claiming a stream that is no longer running.
+            _LOG.exception("stream worker stopped on error")
+            self._last_error = f"stream stopped: {exc}"
+            self._streaming = False
+            self._paused = False
 
     def _publish(self, sample: Sample) -> None:
         for q in self._subscribers:
@@ -561,3 +608,63 @@ class BoardManager:
         self._require_connected()
         if self._streaming:
             raise RuntimeError("stop streaming before changing configuration")
+
+
+def _validate_config(config: dict[str, Any]) -> None:
+    """Reject configs that would break recording or conversion later.
+
+    ``PUT /api/config`` used to persist anything, and the first recording
+    then died on a KeyError in ``_record_meta``. Validation failures raise
+    ``ValueError`` (surfaced as HTTP 422).
+    """
+    profiles = config.get("profiles")
+    active = config.get("active_profile")
+    if not isinstance(profiles, dict) or not profiles:
+        raise ValueError("config needs a non-empty 'profiles' mapping")
+    if not isinstance(active, str) or active not in profiles:
+        raise ValueError("'active_profile' must name one of the profiles")
+    for profile_name, profile in profiles.items():
+        if not isinstance(profile, dict):
+            raise ValueError(f"profile '{profile_name}' must be an object")
+        channels = profile.get("channels")
+        if not isinstance(channels, dict):
+            raise ValueError(f"profile '{profile_name}' needs a 'channels' mapping")
+        for key in CHANNEL_KEYS:
+            channel = channels.get(key)
+            if not isinstance(channel, dict):
+                raise ValueError(f"profile '{profile_name}' is missing channel '{key}'")
+            if not isinstance(channel.get("name"), str) or not isinstance(
+                channel.get("unit"), str
+            ):
+                raise ValueError(f"channel '{key}' needs string 'name' and 'unit'")
+            for field in ("gain", "offset"):
+                value = channel.get(field)
+                if isinstance(value, bool) or not isinstance(value, (int, float)):
+                    raise ValueError(f"channel '{key}' needs a numeric '{field}'")
+        computed = profile.get("computed", [])
+        if not isinstance(computed, list):
+            raise ValueError(f"profile '{profile_name}' 'computed' must be a list")
+        for comp in computed:
+            if (
+                not isinstance(comp, dict)
+                or not isinstance(comp.get("name"), str)
+                or not isinstance(comp.get("unit"), str)
+                or not isinstance(comp.get("expr"), str)
+            ):
+                raise ValueError("computed channels need string 'name', 'unit' and 'expr'")
+            try:
+                evaluate_expr(comp["expr"], {key: 0.0 for key in CHANNEL_KEYS})
+            except ZeroDivisionError:
+                pass  # structurally valid; zeros in the probe divided
+            except (ValueError, SyntaxError) as exc:
+                raise ValueError(
+                    f"computed channel '{comp['name']}': invalid expression"
+                ) from exc
+    settings = config.get("settings", {})
+    if not isinstance(settings, dict):
+        raise ValueError("'settings' must be an object")
+    rate = settings.get("sample_rate_hz")
+    if rate is not None and (
+        isinstance(rate, bool) or not isinstance(rate, (int, float)) or rate <= 0
+    ):
+        raise ValueError("'settings.sample_rate_hz' must be a positive number or null")

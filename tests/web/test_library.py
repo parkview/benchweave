@@ -147,10 +147,12 @@ def test_retention_scan_returns_expired_stems(library: CaptureLibrary) -> None:
 
 
 def test_trash_moves_files_and_drops_rows(library: CaptureLibrary) -> None:
-    with (
-        mock.patch("benchweave.web.library.shutil.which", return_value="gio"),
-        mock.patch("benchweave.web.library.subprocess.run") as run,
-    ):
+    def fake_send2trash(path: str) -> None:
+        Path(path).unlink()
+
+    with mock.patch(
+        "benchweave.web.library.send2trash", side_effect=fake_send2trash
+    ) as sender:
         result = cast(dict[str, Any], library.trash([STEM]))
 
     assert result["errors"] == []
@@ -158,16 +160,21 @@ def test_trash_moves_files_and_drops_rows(library: CaptureLibrary) -> None:
         f"{STEM}.csv",
         f"{STEM}.png",
     }
-    assert len(run.call_args_list) == 2
-    assert all(args[0][0][:2] == ["gio", "trash"] for args in run.call_args_list)
+    assert len(sender.call_args_list) == 2
+    # With every file gone, the explicitly trashed stem's row is dropped.
+    assert library.get_annotations(STEM) == []
 
 
-def test_trash_no_tool_reports_error(library: CaptureLibrary) -> None:
-    with mock.patch("benchweave.web.library.shutil.which", return_value=None):
+def test_trash_failure_reports_error_and_keeps_metadata(library: CaptureLibrary) -> None:
+    with mock.patch(
+        "benchweave.web.library.send2trash", side_effect=OSError("no trash here")
+    ):
         result = cast(dict[str, Any], library.trash([STEM]))
 
     assert result["trashed"] == []
-    assert all("no trash tool" in e["detail"] for e in result["errors"])
+    assert all("no trash here" in e["detail"] for e in result["errors"])
+    # Files survived the failed trash, so the metadata row must survive too.
+    assert library.file_for(STEM, "csv") is not None
 
 
 def test_file_for_rejects_traversal(library: CaptureLibrary) -> None:
@@ -261,15 +268,17 @@ def test_annotations_clean_invalid_markers(library: CaptureLibrary) -> None:
     assert stored[0]["t"] == 1.0
 
 
-def test_annotations_pruned_when_capture_deleted(library: CaptureLibrary) -> None:
+def test_annotations_survive_missing_files(library: CaptureLibrary) -> None:
     library.set_annotations(STEM, [{"label": "A", "t": 1.0, "note": ""}])
     assert library.get_annotations(STEM)  # saved
 
+    # A scan with the files absent marks the row missing but must never
+    # cascade-delete the markers (the old behaviour silently wiped them).
     (library._captures_dir / f"{STEM}.csv").unlink()
     (library._captures_dir / f"{STEM}.png").unlink()
-    library.scan()  # reconcile drops the capture row -> cascade deletes annotations
+    library.scan()
 
-    assert library.get_annotations(STEM) == []
+    assert library.get_annotations(STEM) == [{"label": "A", "t": 1.0, "note": ""}]
 
 
 def test_power_empty_by_default(library: CaptureLibrary) -> None:
@@ -307,7 +316,9 @@ def test_power_clean_invalid(library: CaptureLibrary) -> None:
 
 
 def test_power_reuse_by_matching_names(library: CaptureLibrary) -> None:
-    library.set_power(STEM, {"mode": "load-step", "rails": [{"v": "Voltage", "i": "Current"}]})
+    library.set_power(
+        STEM, {"mode": "load-step", "rails": [{"v": "Voltage", "i": "Current"}]}
+    )
 
     stem2 = "adc_5678_test2_20260914_130000"
     (library._captures_dir / f"{stem2}.csv").write_text(CSV)
@@ -321,7 +332,9 @@ def test_power_reuse_by_matching_names(library: CaptureLibrary) -> None:
 
 
 def test_power_reuse_skips_unmatched_names(library: CaptureLibrary) -> None:
-    library.set_power(STEM, {"mode": "sleep", "rails": [{"v": "3V3", "i": "mA"}]})
+    library.set_power(
+        STEM, {"mode": "sleep", "rails": [{"v": "3V3", "i": "mA"}]}
+    )
 
     stem2 = "adc_5678_test2_20260914_130000"
     (library._captures_dir / f"{stem2}.csv").write_text(CSV)
@@ -341,14 +354,28 @@ def test_power_default_mode_invalid_falls_back(library: CaptureLibrary) -> None:
     assert library.get_setting("power_mode") == "battery"
 
 
-def test_power_pruned_when_capture_deleted(library: CaptureLibrary) -> None:
-    library.set_power(STEM, {"mode": "sleep", "rails": [{"v": "Voltage", "i": "Current"}]})
+def test_power_survives_missing_files_and_dies_on_trash(library: CaptureLibrary) -> None:
+    library.set_power(
+        STEM, {"mode": "sleep", "rails": [{"v": "Voltage", "i": "Current"}]}
+    )
     assert library.get_power(STEM)["source"] == "capture"
 
+    # Files vanishing from disk (unmounted drive, sync client mid-flight) only
+    # MARKS the row missing; the power analysis must survive the next scan.
+    csv_bytes = (library._captures_dir / f"{STEM}.csv").read_bytes()
     (library._captures_dir / f"{STEM}.csv").unlink()
     (library._captures_dir / f"{STEM}.png").unlink()
-    library.scan()  # reconcile drops the capture row -> cascade deletes power_analysis
+    library.scan()
+    assert library.get_power(STEM)["source"] == "capture"
 
+    # And when the files come back, everything reads exactly as before.
+    (library._captures_dir / f"{STEM}.csv").write_bytes(csv_bytes)
+    library.scan()
+    assert library.get_power(STEM)["source"] == "capture"
+
+    # Only the explicit trash API hard-deletes the row (and cascades power).
+    (library._captures_dir / f"{STEM}.csv").unlink()
+    library.trash([STEM])
     assert library.get_power(STEM) == {"mode": "battery", "rails": [], "source": "default"}
 
 

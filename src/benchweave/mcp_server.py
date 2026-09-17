@@ -172,7 +172,7 @@ def load_capture(stem: str) -> dict[str, object]:
 
 
 @mcp.tool()
-def capture_series(stem: str, name: str, max_points: int = 0) -> dict[str, object]:
+def capture_series(stem: str, name: str, max_points: int = 2000) -> dict[str, object]:
     """Return one channel's full time series from a capture, matched by channel name.
 
     ``max_points`` evenly decimates a long trace (0 = return every point)."""

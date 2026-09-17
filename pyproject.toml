@@ -30,6 +30,7 @@ dependencies = [
     "fastapi>=0.110",
     "uvicorn>=0.27",
     "mcp>=2.2.0",
+    "send2trash>=1.8",
 ]
 
 [dependency-groups]

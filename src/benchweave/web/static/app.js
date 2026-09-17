@@ -566,6 +566,26 @@ function setStatus(msg) {
   document.getElementById("status").textContent = msg;
 }
 
+// Build an element from properties and children without going through HTML
+// parsing, so untrusted strings (channel names, units, project names, ...)
+// can never inject markup. Properties are assigned as DOM properties (value,
+// type, checked, textContent, ...); `dataset` entries become data-* attributes.
+// String children become text nodes.
+function el(tag, props = {}, children = []) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === "dataset") {
+      for (const [dk, dv] of Object.entries(v)) node.dataset[dk] = dv;
+    } else {
+      node[k] = v;
+    }
+  }
+  for (const child of children) {
+    node.appendChild(child instanceof Node ? child : document.createTextNode(String(child)));
+  }
+  return node;
+}
+
 // -- Connect flow -----------------------------------------------------------
 
 async function discover() {
@@ -788,19 +808,27 @@ function renderChannelTable() {
   const profile = currentConfig.profiles[currentConfig.active_profile];
   CHANNEL_KEYS.forEach((key, i) => {
     const ch = profile.channels[key];
-    const tr = document.createElement("tr");
-    tr.innerHTML =
-      `<td>${key}</td>` +
-      `<td><input type="text" data-key="${key}" data-field="name" value="${ch.name}"></td>` +
-      `<td><input type="text" data-key="${key}" data-field="unit" value="${ch.unit}"></td>` +
-      `<td><input type="number" step="any" data-key="${key}" data-field="gain" value="${ch.gain}"></td>` +
-      `<td><input type="number" step="any" data-key="${key}" data-field="offset" value="${ch.offset}"></td>` +
-      `<td><input type="color" data-key="${key}" data-field="color" value="${
-        ch.color || COLORS[i % COLORS.length]
-      }"></td>` +
-      `<td><input type="checkbox" data-key="${key}" data-field="show"${
-        ch.show === false ? "" : " checked"
-      }></td>`;
+    const tr = el("tr", {}, [
+      el("td", {}, [key]),
+      el("td", {}, [el("input", { type: "text", value: ch.name, dataset: { key, field: "name" } })]),
+      el("td", {}, [el("input", { type: "text", value: ch.unit, dataset: { key, field: "unit" } })]),
+      el("td", {}, [
+        el("input", { type: "number", step: "any", value: ch.gain, dataset: { key, field: "gain" } }),
+      ]),
+      el("td", {}, [
+        el("input", { type: "number", step: "any", value: ch.offset, dataset: { key, field: "offset" } }),
+      ]),
+      el("td", {}, [
+        el("input", {
+          type: "color",
+          value: ch.color || COLORS[i % COLORS.length],
+          dataset: { key, field: "color" },
+        }),
+      ]),
+      el("td", {}, [
+        el("input", { type: "checkbox", checked: ch.show !== false, dataset: { key, field: "show" } }),
+      ]),
+    ]);
     tbody.appendChild(tr);
   });
 }
@@ -862,19 +890,31 @@ function renderComputedTable() {
   tbody.innerHTML = "";
   const profile = currentConfig.profiles[currentConfig.active_profile];
   (profile.computed || []).forEach((comp, i) => {
-    const tr = document.createElement("tr");
-    tr.innerHTML =
-      `<td><input type="text" data-index="${i}" data-field="name" value="${comp.name || ""}"></td>` +
-      `<td><input type="text" data-index="${i}" data-field="unit" value="${comp.unit || ""}"></td>` +
-      `<td><input type="text" data-index="${i}" data-field="expr" value="${comp.expr || ""}"></td>` +
-      `<td><input type="color" data-index="${i}" data-field="color" value="${
-        comp.color || COLORS[(CHANNEL_KEYS.length + i) % COLORS.length]
-      }"></td>` +
-      `<td><input type="checkbox" data-index="${i}" data-field="show"${
-        comp.show === false ? "" : " checked"
-      }></td>` +
-      `<td><button data-delete="${i}">✕</button></td>`;
-    tr.querySelector("button").addEventListener("click", () => onDeleteComputed(i));
+    const index = String(i);
+    const del = el("button", { textContent: "✕", dataset: { delete: index } });
+    del.addEventListener("click", () => onDeleteComputed(i));
+    const tr = el("tr", {}, [
+      el("td", {}, [
+        el("input", { type: "text", value: comp.name || "", dataset: { index, field: "name" } }),
+      ]),
+      el("td", {}, [
+        el("input", { type: "text", value: comp.unit || "", dataset: { index, field: "unit" } }),
+      ]),
+      el("td", {}, [
+        el("input", { type: "text", value: comp.expr || "", dataset: { index, field: "expr" } }),
+      ]),
+      el("td", {}, [
+        el("input", {
+          type: "color",
+          value: comp.color || COLORS[(CHANNEL_KEYS.length + i) % COLORS.length],
+          dataset: { index, field: "color" },
+        }),
+      ]),
+      el("td", {}, [
+        el("input", { type: "checkbox", checked: comp.show !== false, dataset: { index, field: "show" } }),
+      ]),
+      el("td", {}, [del]),
+    ]);
     tbody.appendChild(tr);
   });
 }
@@ -1102,8 +1142,11 @@ async function renderStorage() {
     const tbody = document.querySelector("#analyse-storage-table tbody");
     tbody.innerHTML = "";
     stats.per_project.forEach((p) => {
-      const tr = document.createElement("tr");
-      tr.innerHTML = `<td>${p.project}</td><td>${p.count}</td><td>${fmtBytes(p.bytes)}</td>`;
+      const tr = el("tr", {}, [
+        el("td", {}, [String(p.project)]),
+        el("td", {}, [String(p.count)]),
+        el("td", {}, [fmtBytes(p.bytes)]),
+      ]);
       tbody.appendChild(tr);
     });
   } catch (e) {

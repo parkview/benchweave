@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -23,6 +23,9 @@ from plugins.adc_6ch_12bit.protocol import AVERAGING_CHOICES, CHANNEL_MASK_ALL
 
 STATIC_DIR = Path(__file__).parent / "static"
 SSE_MIN_INTERVAL = 0.033  # downsample the live view to ~30 Hz
+MAX_BODY_BYTES = 20 * 1024 * 1024  # request-body ceiling (graph PNGs are the largest)
+MAX_PNG_BYTES = 10 * 1024 * 1024  # decoded graph-export image ceiling
+MAX_DATA_POINTS = 5000  # default per-channel points served by /data
 
 manager = BoardManager()
 library = CaptureLibrary()
@@ -36,6 +39,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="BenchWeave ADC", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def _limit_body(request: Request, call_next):  # type: ignore[no-untyped-def]
+    length = request.headers.get("content-length")
+    if length and length.isdigit() and int(length) > MAX_BODY_BYTES:
+        return JSONResponse({"detail": "request body too large"}, status_code=413)
+    return await call_next(request)
 
 
 class ConnectBody(BaseModel):
@@ -146,6 +157,8 @@ def get_config() -> dict[str, Any]:
 def put_config(body: dict[str, Any]) -> dict[str, Any]:
     try:
         return manager.set_config(body)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -153,7 +166,9 @@ def put_config(body: dict[str, Any]) -> dict[str, Any]:
 @app.post("/api/averaging")
 def set_averaging(body: AveragingBody) -> dict[str, object]:
     if body.n not in AVERAGING_CHOICES:
-        raise HTTPException(status_code=422, detail=f"averaging must be one of {AVERAGING_CHOICES}")
+        raise HTTPException(
+            status_code=422, detail=f"averaging must be one of {AVERAGING_CHOICES}"
+        )
     try:
         return manager.set_averaging(body.n)
     except Exception as exc:
@@ -210,6 +225,8 @@ def graph_export(body: GraphExportBody) -> dict[str, object]:
         data = base64.b64decode(image, validate=True)
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=422, detail="invalid PNG data") from exc
+    if len(data) > MAX_PNG_BYTES:
+        raise HTTPException(status_code=413, detail="image too large")
     return manager.save_graph_png(data)
 
 
@@ -223,7 +240,10 @@ def graph_reveal() -> dict[str, object]:
 
 @app.get("/api/stream")
 async def stream(request: Request) -> StreamingResponse:
-    queue = manager.subscribe()
+    try:
+        queue = manager.subscribe()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     async def events() -> AsyncIterator[str]:
         last = 0.0
@@ -270,14 +290,31 @@ def retention_suggestions() -> dict[str, object]:
 
 
 @app.get("/api/captures/{stem}/data")
-def capture_data(stem: str) -> dict[str, object]:
+def capture_data(stem: str, max_points: int = MAX_DATA_POINTS) -> dict[str, object]:
     path = library.file_for(stem, "csv")
     if path is None:
         raise HTTPException(status_code=404, detail=f"no CSV for '{stem}'")
     try:
-        return library.parse_csv(path)
+        data = library.parse_csv(path)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if max_points > 0:
+        data["series"] = [
+            {**s, "points": _decimate(cast(list[Any], s["points"]), max_points)}
+            for s in cast(list[dict[str, Any]], data["series"])
+        ]
+    return data
+
+
+def _decimate(points: list[Any], limit: int) -> list[Any]:
+    """Every n-th point so at most ``limit`` survive; endpoints preserved."""
+    if len(points) <= limit:
+        return points
+    step = (len(points) + limit - 1) // limit
+    sampled = points[::step]
+    if sampled[-1] is not points[-1]:
+        sampled.append(points[-1])
+    return sampled
 
 
 @app.get("/api/captures/{stem}/file")
@@ -287,7 +324,13 @@ def capture_file(stem: str, ext: str = "csv") -> FileResponse:
     path = library.file_for(stem, ext)
     if path is None:
         raise HTTPException(status_code=404, detail=f"no {ext} for '{stem}'")
-    return FileResponse(path)
+    response = FileResponse(path)
+    if ext == "html":
+        # Serve stored HTML in a unique origin: report files (or anything
+        # dropped into the captures directory) must not script against the
+        # gateway API. allow-scripts keeps the report itself working.
+        response.headers["Content-Security-Policy"] = "sandbox allow-scripts"
+    return response
 
 
 @app.get("/api/captures/{stem}/annotations")
@@ -356,23 +399,22 @@ def generate_report(stem: str, body: ReportBody) -> dict[str, object]:
             min(body.zoom.lo, body.zoom.hi),
             max(body.zoom.lo, body.zoom.hi),
         )
-    assertions = cast(list[dict[str, Any]], library.check_assertions(stem)["results"])
+    assertions = cast(
+        list[dict[str, Any]], library.check_assertions(stem, parsed=data)["results"]
+    )
     html = build_report(
-        data,
-        markers,
-        lo,
-        hi,
-        body.power.model_dump() if body.power else None,
-        assertions,
-        zoom,
+        data, markers, lo, hi, body.power.model_dump() if body.power else None,
+        assertions, zoom,
     )
     out = csv.with_suffix(".html")
-    out.write_text(html)
+    out.write_text(html, encoding="utf-8")
     return {"stem": stem, "name": out.name, "path": str(out)}
 
 
 @app.post("/api/captures/{stem}/project")
 def capture_assign(stem: str, body: AssignProjectBody) -> dict[str, object]:
+    if library.file_for(stem, "csv") is None and library.file_for(stem, "png") is None:
+        raise HTTPException(status_code=404, detail=f"no capture '{stem}'")
     try:
         return library.assign_project(stem, body.project)
     except ValueError as exc:

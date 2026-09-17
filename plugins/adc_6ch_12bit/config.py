@@ -54,14 +54,14 @@ def load_config() -> dict[str, Any]:
     if not CONFIG_PATH.exists():
         return copy.deepcopy(DEFAULT_CONFIG)
     try:
-        return cast(dict[str, Any], json.loads(CONFIG_PATH.read_text()))
+        return cast(dict[str, Any], json.loads(CONFIG_PATH.read_text(encoding="utf-8")))
     except (OSError, ValueError):
         return copy.deepcopy(DEFAULT_CONFIG)
 
 
 def save_config(config: dict[str, Any]) -> None:
     """Persist the runtime config to the plugin directory."""
-    CONFIG_PATH.write_text(json.dumps(config, indent=2))
+    CONFIG_PATH.write_text(json.dumps(config, indent=2), encoding="utf-8")
 
 
 def evaluate_expr(expr: str, values: dict[str, float]) -> float:
