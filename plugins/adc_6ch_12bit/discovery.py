@@ -9,6 +9,7 @@ signature (protocol 1, 6 channels, 12-bit resolution).
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -40,8 +41,17 @@ def adc_capture_filename(serial: str | None, *, ext: str = "csv", tag: str | Non
 
 
 def capture_dir() -> Path:
-    """Return (and create) this plugin's ``captures/`` directory."""
-    path = Path(__file__).parent / "captures"
+    """Return (and create) the ``captures/`` directory for this plugin's data.
+
+    By default captures live in ``captures/`` beside the plugin source. The
+    ``BENCHWEAVE_ADC_DATA_DIR`` environment variable (a development/test
+    knob) overrides the data root: when set, this returns
+    ``$BENCHWEAVE_ADC_DATA_DIR/captures`` instead. In both cases the
+    directory (and any missing parents) is created on demand.
+    """
+    root = os.environ.get("BENCHWEAVE_ADC_DATA_DIR")
+    base = Path(root) if root else Path(__file__).parent
+    path = base / "captures"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
