@@ -74,9 +74,7 @@ def test_get_config_returns_manager_config(
     assert response.json() == fake_manager.config
 
 
-def test_put_config_valid_roundtrips(
-    client: TestClient, fake_manager: FakeBoardManager
-) -> None:
+def test_put_config_valid_roundtrips(client: TestClient, fake_manager: FakeBoardManager) -> None:
     config = copy.deepcopy(DEFAULT_CONFIG)
     config["profiles"]["default"]["channels"]["A0"]["name"] = "Rail 3V3"
     response = client.put("/api/config", json=config)
@@ -143,9 +141,7 @@ def test_set_averaging_valid(client: TestClient, fake_manager: FakeBoardManager)
     assert fake_manager.called("set_averaging") == [(16,)]
 
 
-def test_set_averaging_invalid_is_422(
-    client: TestClient, fake_manager: FakeBoardManager
-) -> None:
+def test_set_averaging_invalid_is_422(client: TestClient, fake_manager: FakeBoardManager) -> None:
     response = client.post("/api/averaging", json={"n": 3})
     assert response.status_code == 422
     assert fake_manager.called("set_averaging") == []
@@ -170,9 +166,7 @@ def test_set_channels_invalid_is_422(
 
 
 @pytest.mark.parametrize("record", [True, False])
-def test_stream_start(
-    client: TestClient, fake_manager: FakeBoardManager, record: bool
-) -> None:
+def test_stream_start(client: TestClient, fake_manager: FakeBoardManager, record: bool) -> None:
     response = client.post("/api/stream/start", json={"record": record, "note": "bench"})
     assert response.status_code == 200
     body = response.json()
@@ -200,9 +194,7 @@ def test_stream_stop(client: TestClient, fake_manager: FakeBoardManager) -> None
     assert fake_manager.called("stop_stream") == [()]
 
 
-def test_stream_pause_and_resume(
-    client: TestClient, fake_manager: FakeBoardManager
-) -> None:
+def test_stream_pause_and_resume(client: TestClient, fake_manager: FakeBoardManager) -> None:
     client.post("/api/stream/start")
     paused = client.post("/api/stream/pause")
     assert paused.status_code == 200
@@ -217,9 +209,7 @@ def test_stream_pause_and_resume(
 # -- graph export / reveal -------------------------------------------------------------
 
 
-def test_graph_export_valid_base64(
-    client: TestClient, fake_manager: FakeBoardManager
-) -> None:
+def test_graph_export_valid_base64(client: TestClient, fake_manager: FakeBoardManager) -> None:
     image = base64.b64encode(PNG_BYTES).decode("ascii")
     response = client.post("/api/graph/export", json={"image": image})
     assert response.status_code == 200
@@ -262,9 +252,7 @@ def test_graph_reveal(client: TestClient, fake_manager: FakeBoardManager) -> Non
     assert fake_manager.called("reveal_graph_png") == [()]
 
 
-def test_graph_reveal_error_maps_to_500(
-    client: TestClient, fake_manager: FakeBoardManager
-) -> None:
+def test_graph_reveal_error_maps_to_500(client: TestClient, fake_manager: FakeBoardManager) -> None:
     fake_manager.reveal_error = "no file manager available"
     response = client.post("/api/graph/reveal")
     assert response.status_code == 500
@@ -274,9 +262,7 @@ def test_graph_reveal_error_maps_to_500(
 # -- SSE live stream ---------------------------------------------------------------------
 
 
-async def _drive_sse(
-    app: ASGIApp, frames_wanted: int
-) -> tuple[int, dict[str, str], list[str]]:
+async def _drive_sse(app: ASGIApp, frames_wanted: int) -> tuple[int, dict[str, str], list[str]]:
     """Run one GET /api/stream against the raw ASGI app, as a client that
     disconnects once ``frames_wanted`` SSE data frames have arrived.
 
@@ -304,9 +290,7 @@ async def _drive_sse(
         nonlocal status
         if message["type"] == "http.response.start":
             status = message["status"]
-            headers.update(
-                {key.decode(): value.decode() for key, value in message["headers"]}
-            )
+            headers.update({key.decode(): value.decode() for key, value in message["headers"]})
         elif message["type"] == "http.response.body":
             chunk = bytes(message.get("body", b""))
             if chunk:
@@ -351,9 +335,7 @@ def test_stream_sse_frames_and_cleanup(
     assert status == 200
     assert headers["content-type"].startswith("text/event-stream")
     frames = [
-        json.loads(chunk.removeprefix("data: "))
-        for chunk in chunks
-        if chunk.startswith("data: ")
+        json.loads(chunk.removeprefix("data: ")) for chunk in chunks if chunk.startswith("data: ")
     ]
     assert [frame["counter"] for frame in frames] == [0, 1, 2]
     assert [frame["averaged_n"] for frame in frames] == [4, 4, 4]

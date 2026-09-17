@@ -92,9 +92,7 @@ def test_capture_data(client: TestClient, captures_dir: Path) -> None:
     assert data["series"][0]["points"] == [[0.0, 1.0], [1.0, 1.1]]
 
 
-def test_capture_data_decimates_to_max_points(
-    client: TestClient, captures_dir: Path
-) -> None:
+def test_capture_data_decimates_to_max_points(client: TestClient, captures_dir: Path) -> None:
     _write_capture(captures_dir, text=_multirow_csv(12))
     response = client.get(f"/api/captures/{STEM}/data", params={"max_points": 1})
     assert response.status_code == 200
@@ -109,9 +107,7 @@ def test_capture_data_unknown_stem_is_404(client: TestClient) -> None:
     assert response.status_code == 404
 
 
-def test_capture_data_traversal_stem_is_404(
-    client: TestClient, captures_dir: Path
-) -> None:
+def test_capture_data_traversal_stem_is_404(client: TestClient, captures_dir: Path) -> None:
     _write_capture(captures_dir)
     response = client.get("/api/captures/..%2Fetc/data")
     assert response.status_code == 404
@@ -200,9 +196,7 @@ def test_power_roundtrip(client: TestClient, captures_dir: Path) -> None:
 
 def test_power_unknown_stem_is_404(client: TestClient) -> None:
     assert client.get(f"/api/captures/{UNKNOWN_STEM}/power").status_code == 404
-    put = client.put(
-        f"/api/captures/{UNKNOWN_STEM}/power", json={"mode": "battery", "rails": []}
-    )
+    put = client.put(f"/api/captures/{UNKNOWN_STEM}/power", json={"mode": "battery", "rails": []})
     assert put.status_code == 404
 
 
@@ -300,14 +294,10 @@ def test_report_unknown_stem_is_404(client: TestClient) -> None:
     assert response.status_code == 404
 
 
-def test_report_escapes_hostile_channel_name(
-    client: TestClient, captures_dir: Path
-) -> None:
+def test_report_escapes_hostile_channel_name(client: TestClient, captures_dir: Path) -> None:
     buffer = io.StringIO()
     writer = csv_module.writer(buffer, lineterminator="\n")
-    writer.writerow(
-        ["timestamp", "elapsed_s", "actual_sps", "counter", "averaged_n", HOSTILE]
-    )
+    writer.writerow(["timestamp", "elapsed_s", "actual_sps", "counter", "averaged_n", HOSTILE])
     hostile_csv = (
         "# profile: default\n"
         f"# note: {HOSTILE}\n"
@@ -330,15 +320,11 @@ def test_report_escapes_hostile_channel_name(
 
 
 def test_capture_project_unknown_stem_is_404(client: TestClient) -> None:
-    response = client.post(
-        f"/api/captures/{UNKNOWN_STEM}/project", json={"project": None}
-    )
+    response = client.post(f"/api/captures/{UNKNOWN_STEM}/project", json={"project": None})
     assert response.status_code == 404
 
 
-def test_capture_project_assign_and_unknown_project(
-    client: TestClient, captures_dir: Path
-) -> None:
+def test_capture_project_assign_and_unknown_project(client: TestClient, captures_dir: Path) -> None:
     _write_capture(captures_dir)
     assert client.post("/api/projects", json={"name": "battery"}).status_code == 200
     ok = client.post(f"/api/captures/{STEM}/project", json={"project": "battery"})

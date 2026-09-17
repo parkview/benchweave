@@ -37,9 +37,7 @@ def captures_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 @pytest.fixture
 def web_library(captures_dir: Path) -> CaptureLibrary:
     """A fresh ``CaptureLibrary`` rooted in the per-test tmp data dir."""
-    return CaptureLibrary(
-        db_path=captures_dir.parent / "library.db", captures_dir=captures_dir
-    )
+    return CaptureLibrary(db_path=captures_dir.parent / "library.db", captures_dir=captures_dir)
 
 
 @pytest.fixture

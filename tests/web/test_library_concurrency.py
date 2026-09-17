@@ -31,9 +31,7 @@ def test_two_writers_share_one_database(tmp_path: Path) -> None:
         try:
             for i in range(ITERATIONS):
                 library.scan()
-                library.set_annotations(
-                    STEM, [{"label": label, "t": float(i), "note": "spin"}]
-                )
+                library.set_annotations(STEM, [{"label": label, "t": float(i), "note": "spin"}])
         except Exception as exc:  # pragma: no cover - reported via the assert
             errors.append(exc)
 
