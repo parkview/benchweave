@@ -87,13 +87,16 @@ Capture a bounded run to a VCD file and return a summary.
 | `samples` | `1000` | Run length in samples |
 | `channels` | `"D0,D1,D2,D3,D4,D5,D6,D7"` | Comma-separated channel names |
 | `trigger` | `None` | Optional, e.g. `"D0=r"` (rising) or `"D0=1"` (high) |
-| `name` | timestamp | File stem; written to `<capture-dir>/<stem>.vcd` |
+| `name` | ISO-8601 timestamp | File stem (default `nanodla_<YYYY-MM-DDTHH-MM-SS>`); written to `<capture-dir>/<stem>.vcd` and `<stem>.json` |
 | `timeout` | `30` | Seconds before giving up |
 
 ```json
 {
-  "file": "captures/nanodla/uart_loopback.vcd",
-  "stem": "uart_loopback",
+  "file": "captures/nanodla/nanodla_2026-09-18T16-03-39.vcd",
+  "sidecar": "captures/nanodla/nanodla_2026-09-18T16-03-39.json",
+  "captured_at": "2026-09-18T16:03:39.123456+10:00",
+  "device": "fx2lafw",
+  "stem": "nanodla_2026-09-18T16-03-39",
   "samplerate_hz": 2000000,
   "samples": 4000000,
   "channels": "D0",
@@ -102,6 +105,11 @@ Capture a bounded run to a VCD file and return a summary.
   "size_bytes": 20454
 }
 ```
+
+A JSON sidecar of the same stem is written beside the VCD, recording the capture
+metadata (`captured_at`, device, rate, samples, channels, trigger, duration) so a
+human can recover the specs without opening the VCD. The VCD header itself only
+records rate/channels in a `$comment` and does not store baud or trigger.
 
 Backing command:
 ```sh
@@ -141,7 +149,8 @@ Show a decoder's options, input channels and annotation classes. Returns the raw
 
 ### `list_captures`
 
-List saved VCDs, newest first, as `{"file", "size_bytes", "modified"}`. `limit`
+List saved VCDs, newest first, as `{"file", "sidecar", "size_bytes", "modified"}`.
+`sidecar` is the matching metadata file's path when present, else `null`. `limit`
 defaults to `20`.
 
 ## End-to-end example: UART loopback
@@ -195,13 +204,16 @@ capturing, then decode it back.
 ## What to expect from results
 
 - **`capture` returns a summary, not the samples.** The waveform lives in the VCD
-  file named by `file`; the summary fields describe the run. Open the VCD in
-  PulseView to inspect the waveform, or feed it to `decode`.
+  file named by `file`; the summary fields describe the run. The same summary is
+  persisted to a `.json` sidecar next to the VCD (`sidecar` names it), so a human
+  can recover the capture specs without opening the VCD. Open the VCD in PulseView
+  to inspect the waveform, or feed it to `decode`.
 - **Decode output is plain text.** With `format=ascii`, printable bytes appear as
   characters; with the default (hex) they appear as byte values (`42`, `65`, …). The
   `annotations` field is the full annotation stream, one line per annotation.
-- **Captures accumulate** in `captures/nanodla` (override with `NANODLA_CAPTURE_DIR`);
-  use `list_captures` to find them.
+- **Captures accumulate** in `captures/nanodla` (override with `NANODLA_CAPTURE_DIR`).
+  Each capture writes a `.vcd` plus a matching `.json` sidecar; use `list_captures`
+  to find them (its `sidecar` field names the metadata file when present).
 
 ### Trigger and the UART start bit
 

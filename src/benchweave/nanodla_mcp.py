@@ -16,6 +16,7 @@ board revision exists and has not been tested with this server.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from datetime import datetime
@@ -93,9 +94,15 @@ def capture(
     ``samplerate`` is in Hz (20 kHz .. 24 MHz); ``samples`` is the run length.
     ``trigger`` is optional, e.g. ``"D0=r"`` (rising) or ``"D0=1"`` (high) —
     note a trigger that never fires will run until ``timeout`` and then fail.
+
+    The VCD is written to ``<capture-dir>/<stem>.vcd`` alongside a JSON sidecar
+    ``<capture-dir>/<stem>.json`` recording the capture metadata (device, rate,
+    samples, channels, trigger, duration). Without an explicit ``name`` the stem
+    is ``nanodla_<YYYY-MM-DDTHH-MM-SS>``.
     """
     CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
-    stem = name or f"nanodla_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    captured_at = datetime.now().astimezone()
+    stem = name or f"nanodla_{captured_at.strftime('%Y-%m-%dT%H-%M-%S')}"
     out_path = CAPTURE_DIR / f"{stem}.vcd"
     args = [
         "-d", "fx2lafw",
@@ -107,8 +114,10 @@ def capture(
         args += ["--triggers", trigger]
     args += ["-O", "vcd", "-o", str(out_path)]
     _checked(args, timeout)
-    return {
-        "file": str(out_path),
+    sidecar = CAPTURE_DIR / f"{stem}.json"
+    meta = {
+        "captured_at": captured_at.isoformat(),
+        "device": "fx2lafw",
         "stem": stem,
         "samplerate_hz": samplerate,
         "samples": samples,
@@ -117,6 +126,8 @@ def capture(
         "duration_s": samples / samplerate,
         "size_bytes": out_path.stat().st_size,
     }
+    sidecar.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+    return {"file": str(out_path), "sidecar": str(sidecar), **meta}
 
 
 @mcp.tool()
@@ -171,7 +182,7 @@ def decoder_help(decoder: str) -> str:
 
 @mcp.tool()
 def list_captures(limit: int = 20) -> list[dict[str, object]]:
-    """List saved captures, newest first, with sizes."""
+    """List saved captures, newest first, with sizes and sidecar paths."""
     if not CAPTURE_DIR.exists():
         return []
     files = sorted(
@@ -182,9 +193,11 @@ def list_captures(limit: int = 20) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     for path in files[:limit]:
         stat = path.stat()
+        sidecar = path.with_suffix(".json")
         rows.append(
             {
                 "file": str(path),
+                "sidecar": str(sidecar) if sidecar.exists() else None,
                 "size_bytes": stat.st_size,
                 "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
             }
