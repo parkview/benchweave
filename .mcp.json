@@ -3,6 +3,10 @@
     "benchweave-adc": {
       "command": "uv",
       "args": ["run", "benchweave-mcp"]
+    },
+    "benchweave-nanodla": {
+      "command": "uv",
+      "args": ["run", "nanodla-mcp"]
     }
   }
 }

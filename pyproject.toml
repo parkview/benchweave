@@ -44,6 +44,7 @@ dev = [
 [project.scripts]
 benchweave = "benchweave.__main__:main"
 benchweave-mcp = "benchweave.mcp_server:main"
+nanodla-mcp = "benchweave.nanodla_mcp:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/benchweave", "plugins"]
