@@ -24,6 +24,14 @@ This repository is currently a Python project skeleton plus the frozen architect
 
 - [Analyse page](analyse-page.md) — browse, re-plot, group and retain captured ADC data.
 
+## MCP servers
+
+- [nanoDLA logic analyser](nanodla-mcp-server.md) — discover, capture and decode with the nanoDLA through sigrok-cli.
+
+## Hardware
+
+- [Hardware compatibility](hardware.md) — devices tested with BenchWeave and their status.
+
 ## Development
 
 Use the [AI device reviewer](ai-device-reviewer.md) to assess candidate integrations against the contracts and their evidence.

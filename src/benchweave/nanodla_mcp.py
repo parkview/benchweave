@@ -9,6 +9,9 @@ sample-streaming device, so this is deliberately *not* an OTDP adapter; the
 same capture/streaming semantics live behind the design discussion upstream.
 ``sigrok-cli`` already handles firmware, sampling, triggers and decoding, so
 this server only shells out and shapes the results.
+
+Tested against the nanoDLA v1.3 board (FX2LP + fx2lafw, USB 1d50:608c). A v2.1
+board revision exists and has not been tested with this server.
 """
 
 from __future__ import annotations
