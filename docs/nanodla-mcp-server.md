@@ -75,8 +75,9 @@ Environment variables, all optional:
 
 ## Tools
 
-Seven tools are exposed. Each maps to a single `sigrok-cli` invocation, shown in the
-examples for transparency.
+Eight tools are exposed. Most map to a single `sigrok-cli` invocation, shown in the
+examples for transparency; `list_captures` and `annotate` touch the capture store
+directly.
 
 ### `scan_devices`
 
@@ -164,6 +165,17 @@ Backing command:
 ```sh
 sigrok-cli -i captures/nanodla/uart_loopback.vcd \
   -P uart:rx=D0:baudrate=115200:format=ascii -A uart=rx-data
+```
+
+### `annotate`
+
+Append a free-form analysis note to a capture's manifest. `file` is a capture path
+(`.vcd` or `.sr`); `note` is the prose to record. The note is appended to the
+manifest's `notes` list with a timestamp, so a human can later read what the AI
+concluded without re-running anything.
+
+```json
+{"metadata_file": "captures/nanodla/uart_loopback.json", "recorded": true}
 ```
 
 ### `list_decoders`

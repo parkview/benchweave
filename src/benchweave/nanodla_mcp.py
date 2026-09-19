@@ -70,6 +70,30 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _append_to_manifest(file: str, field: str, entry: dict[str, object]) -> str | None:
+    """Append ``entry`` to ``field`` (a list) of the capture's manifest, if it exists.
+
+    The manifest is ``<stem>.json`` next to ``file``. Returns its path on success,
+    or ``None`` when there is no readable manifest to update.
+    """
+    metadata_path = Path(file).with_suffix(".json")
+    if not metadata_path.exists():
+        return None
+    try:
+        meta = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(meta, dict):
+        return None
+    items = meta.setdefault(field, [])
+    if not isinstance(items, list):
+        items = []
+        meta[field] = items
+    items.append(entry)
+    metadata_path.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+    return str(metadata_path)
+
+
 @mcp.tool()
 def scan_devices() -> list[dict[str, str]]:
     """List logic analyser devices visible to sigrok."""
@@ -197,31 +221,36 @@ def decode(
     result: dict[str, object] = {"decoder": decoder, "file": file, "annotations": out}
 
     # Record the decode in the capture-metadata manifest when one exists.
-    metadata_path = Path(file).with_suffix(".json")
-    result["metadata_file"] = None
-    if metadata_path.exists():
-        try:
-            meta = json.loads(metadata_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            meta = None
-        if isinstance(meta, dict):
-            decodes = meta.setdefault("decodes", [])
-            if not isinstance(decodes, list):
-                decodes = []
-                meta["decodes"] = decodes
-            decodes.append(
-                {
-                    "decoded_at": datetime.now().astimezone().isoformat(),
-                    "decoder": decoder,
-                    "options": options,
-                    "annotation_filter": annotations,
-                    "annotations": out,
-                }
-            )
-            metadata_path.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
-            result["metadata_file"] = str(metadata_path)
+    result["metadata_file"] = _append_to_manifest(
+        file,
+        "decodes",
+        {
+            "decoded_at": datetime.now().astimezone().isoformat(),
+            "decoder": decoder,
+            "options": options,
+            "annotation_filter": annotations,
+            "annotations": out,
+        },
+    )
 
     return result
+
+
+@mcp.tool()
+def annotate(file: str, note: str) -> dict[str, object]:
+    """Append a free-form analysis note to a capture's manifest.
+
+    ``file`` is a capture path (``.vcd`` or ``.sr``); ``note`` is the prose to
+    record. The note is appended to the manifest's ``notes`` list with a
+    timestamp, so a human can later read what the AI concluded. Returns the
+    manifest path (``metadata_file``) or ``null``, and whether it was recorded.
+    """
+    metadata_file = _append_to_manifest(
+        file,
+        "notes",
+        {"noted_at": datetime.now().astimezone().isoformat(), "text": note},
+    )
+    return {"metadata_file": metadata_file, "recorded": metadata_file is not None}
 
 
 @mcp.tool()
