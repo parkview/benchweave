@@ -93,7 +93,7 @@ Capture a bounded run to a VCD file and return a summary.
 ```json
 {
   "file": "captures/nanodla/nanodla_2026-09-18T16-03-39.vcd",
-  "sidecar": "captures/nanodla/nanodla_2026-09-18T16-03-39.json",
+  "metadata_file": "captures/nanodla/nanodla_2026-09-18T16-03-39.json",
   "captured_at": "2026-09-18T16:03:39.123456+10:00",
   "device": "fx2lafw",
   "stem": "nanodla_2026-09-18T16-03-39",
@@ -106,7 +106,7 @@ Capture a bounded run to a VCD file and return a summary.
 }
 ```
 
-A JSON sidecar of the same stem is written beside the VCD, recording the capture
+A JSON capture-metadata file of the same stem is written beside the VCD, recording the capture
 metadata (`captured_at`, device, rate, samples, channels, trigger, duration) so a
 human can recover the specs without opening the VCD. The VCD header itself only
 records rate/channels in a `$comment` and does not store baud or trigger.
@@ -149,8 +149,8 @@ Show a decoder's options, input channels and annotation classes. Returns the raw
 
 ### `list_captures`
 
-List saved VCDs, newest first, as `{"file", "sidecar", "size_bytes", "modified"}`.
-`sidecar` is the matching metadata file's path when present, else `null`. `limit`
+List saved VCDs, newest first, as `{"file", "metadata_file", "size_bytes", "modified"}`.
+`metadata_file` is the matching capture-metadata file's path when present, else `null`. `limit`
 defaults to `20`.
 
 ## End-to-end example: UART loopback
@@ -205,15 +205,15 @@ capturing, then decode it back.
 
 - **`capture` returns a summary, not the samples.** The waveform lives in the VCD
   file named by `file`; the summary fields describe the run. The same summary is
-  persisted to a `.json` sidecar next to the VCD (`sidecar` names it), so a human
+  persisted to a `.json` capture-metadata file next to the VCD (`metadata_file` names it), so a human
   can recover the capture specs without opening the VCD. Open the VCD in PulseView
   to inspect the waveform, or feed it to `decode`.
 - **Decode output is plain text.** With `format=ascii`, printable bytes appear as
   characters; with the default (hex) they appear as byte values (`42`, `65`, …). The
   `annotations` field is the full annotation stream, one line per annotation.
 - **Captures accumulate** in `captures/nanodla` (override with `NANODLA_CAPTURE_DIR`).
-  Each capture writes a `.vcd` plus a matching `.json` sidecar; use `list_captures`
-  to find them (its `sidecar` field names the metadata file when present).
+  Each capture writes a `.vcd` plus a matching `.json` capture-metadata file; use
+  `list_captures` to find them (its `metadata_file` field names the metadata file when present).
 
 ### Trigger and the UART start bit
 

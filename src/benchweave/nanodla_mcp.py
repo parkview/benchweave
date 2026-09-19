@@ -95,7 +95,7 @@ def capture(
     ``trigger`` is optional, e.g. ``"D0=r"`` (rising) or ``"D0=1"`` (high) —
     note a trigger that never fires will run until ``timeout`` and then fail.
 
-    The VCD is written to ``<capture-dir>/<stem>.vcd`` alongside a JSON sidecar
+    The VCD is written to ``<capture-dir>/<stem>.vcd`` alongside a JSON capture-metadata file
     ``<capture-dir>/<stem>.json`` recording the capture metadata (device, rate,
     samples, channels, trigger, duration). Without an explicit ``name`` the stem
     is ``nanodla_<YYYY-MM-DDTHH-MM-SS>``.
@@ -114,7 +114,7 @@ def capture(
         args += ["--triggers", trigger]
     args += ["-O", "vcd", "-o", str(out_path)]
     _checked(args, timeout)
-    sidecar = CAPTURE_DIR / f"{stem}.json"
+    metadata_path = CAPTURE_DIR / f"{stem}.json"
     meta = {
         "captured_at": captured_at.isoformat(),
         "device": "fx2lafw",
@@ -126,8 +126,8 @@ def capture(
         "duration_s": samples / samplerate,
         "size_bytes": out_path.stat().st_size,
     }
-    sidecar.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
-    return {"file": str(out_path), "sidecar": str(sidecar), **meta}
+    metadata_path.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+    return {"file": str(out_path), "metadata_file": str(metadata_path), **meta}
 
 
 @mcp.tool()
@@ -182,7 +182,7 @@ def decoder_help(decoder: str) -> str:
 
 @mcp.tool()
 def list_captures(limit: int = 20) -> list[dict[str, object]]:
-    """List saved captures, newest first, with sizes and sidecar paths."""
+    """List saved captures, newest first, with sizes and capture-metadata paths."""
     if not CAPTURE_DIR.exists():
         return []
     files = sorted(
@@ -193,11 +193,11 @@ def list_captures(limit: int = 20) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     for path in files[:limit]:
         stat = path.stat()
-        sidecar = path.with_suffix(".json")
+        metadata_path = path.with_suffix(".json")
         rows.append(
             {
                 "file": str(path),
-                "sidecar": str(sidecar) if sidecar.exists() else None,
+                "metadata_file": str(metadata_path) if metadata_path.exists() else None,
                 "size_bytes": stat.st_size,
                 "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
             }
