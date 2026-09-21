@@ -22,6 +22,80 @@ power-on / LED state visually.
   auto-exposure, exposure time, continuous AF, focus, zoom) — the descriptor's
   parameter list traces each to `src/benchweave_emeet_c960/docs/eMeet-4K.md`.
 
+## Operating this plugin
+
+The plugin is developed with **uv**. The uv project lives at the worktree root
+(`benchweave-upstream/` — where `.venv`, `uv.lock` and `.python-version` sit);
+the plugin is installed **editable** into that shared venv and has no venv of its
+own. Every command below runs from this directory (`plugins/emeet/c960/`); the
+`--no-project` flag tells uv to use the discovered root venv rather than create a
+plugin-local one.
+
+**Run the tests:**
+
+```bash
+uv run --no-project pytest -q
+```
+
+**Drive the adapter** against a mock host (no hardware):
+
+```bash
+uv run --no-project python - <<'EOF'
+import asyncio, json
+from importlib.resources import files
+from benchweave_sdk.testing import MockContext, MockHost
+from benchweave_sdk.validation import validate_descriptor, validate_result
+from benchweave_emeet_c960.adapter import create_plugin
+from benchweave_emeet_c960.protocol import transaction
+
+descriptor = json.loads(files("benchweave_emeet_c960")
+                        .joinpath("descriptor.json").read_text())
+validate_descriptor(descriptor)
+
+async def run():
+    host = MockHost([
+        (transaction("identify"), {"data": b"EMeet,SmartCam C960 4K\n"}),
+        (transaction("read", "brightness"), {"data": b"32\n"}),
+        (transaction("write", "brightness", 32), {"data": b"OK\n"}),
+    ])
+    plugin = create_plugin()
+    ctx = MockContext("op-1", deadline_monotonic=1.0)
+    await plugin.open(descriptor, host, ctx)
+    for verb, args in [("identify", {}),
+                       ("read", {"parameter": "brightness"}),
+                       ("write", {"parameter": "brightness", "value": 32})]:
+        req = {"operation_id": "op-1", "verb": verb, "arguments": args}
+        res = await plugin.execute(req, ctx)
+        validate_result(res, req)
+        print(f"{verb:9} -> {json.dumps(res, sort_keys=True)}")
+    host.assert_complete()
+    await plugin.close(ctx)
+
+asyncio.run(run())
+EOF
+```
+
+**Build the wheel** (`dist/benchweave_emeet_c960-0.1.0-py3-none-any.whl`):
+
+```bash
+uv build
+```
+
+**(Re)install the plugin's test extra** into the root venv:
+
+```bash
+uv pip install -e ".[test]"
+```
+
+**Browse the files** in Dolphin:
+
+```bash
+dolphin plugins/emeet/c960
+```
+
+Captures are excluded from git (`.gitignore` covers `captures/`); see "Working
+tooling" below for the capture convention.
+
 ## Working tooling — how the controlling LLM views a photo
 
 Until this adapter is qualified, capture goes through the `benchweave-webcam` MCP
