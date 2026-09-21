@@ -26,3 +26,12 @@ def test_descriptor_valid_and_accurate():
     assert by_name["white_balance_automatic"]["type"] == "bool"
     assert all(p["access"] == "rw" for p in descriptor["parameters"])
     assert all("hazard_class" in p for p in descriptor["parameters"])
+
+
+def test_provenance_references_resolve_in_package():
+    descriptor = json.loads(files("benchweave_emeet_c960").joinpath("descriptor.json").read_text())
+    package = files("benchweave_emeet_c960")
+    references = [s["reference"] for s in descriptor["provenance"]["sources"]]
+    references += [v["path"] for v in descriptor["provenance"]["test_vectors"]]
+    for reference in references:
+        assert package.joinpath(reference).is_file(), reference

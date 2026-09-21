@@ -7,7 +7,7 @@ plugin. Use `plugins/<manufacturer>/<name>/` as the project root, with
 
 ## 1. Establish the facts
 
-> Inspect this project and my supplied device evidence (`docs/eMeet-4K.md`: USB
+> Inspect this project and my supplied device evidence (`src/benchweave_emeet_c960/docs/eMeet-4K.md`: USB
 > identity, V4L2 formats, the 16 controls, capture/stream commands). List exact
 > model support, intended operations, control ranges/gating, and unknowns. Map
 > them to OTDP 0.3.0 and adapter API 1.1. Do not invent controls. Propose a small

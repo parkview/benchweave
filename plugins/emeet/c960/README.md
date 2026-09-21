@@ -20,7 +20,7 @@ power-on / LED state visually.
 - 16 V4L2 controls (brightness, contrast, saturation, hue, WB auto/temperature,
   gamma, gain, power-line frequency, sharpness, backlight compensation,
   auto-exposure, exposure time, continuous AF, focus, zoom) — the descriptor's
-  parameter list traces each to `docs/eMeet-4K.md`.
+  parameter list traces each to `src/benchweave_emeet_c960/docs/eMeet-4K.md`.
 
 ## Working tooling — how the controlling LLM views a photo
 
@@ -48,7 +48,7 @@ To turn the scaffold into a real integration: replace the synthetic
 facts, implement the adapter against `v4l2-ctl`/`ffmpeg` (or the MCP service),
 then qualify independently (AI-GUIDE steps 1–5).
 
-Gotchas (from `docs/eMeet-4K.md`): the camera is single-client ("Device or
+Gotchas (from `src/benchweave_emeet_c960/docs/eMeet-4K.md`): the camera is single-client ("Device or
 resource busy" if a browser holds it); USB 2.0 caps 4K at ~5–15 fps; the first
 frame can be dark (auto-exposure hasn't converged — grab a few frames and keep
 the last); `focus_absolute` is inactive until continuous AF is switched off.

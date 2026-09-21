@@ -167,7 +167,10 @@ Structurally identical to `plugins/muselab/nanodla/.../adapter.py`, extended for
   close; reopen requires a fresh instance.
 
 `read` resolves a parameter `key` against the declared parameter list; `write`
-validates the value against the parameter's type/range before dispatch.
+validates the value against the parameter's type/range before dispatch. Read
+results are validated for frame shape/type only — not int range or enum
+membership — so the real V4L2 path must decide how to treat an out-of-range or
+off-enum read (degrade `quality`, clamp, or error).
 
 ## 7. Capture / view story (documented, not implemented here)
 
