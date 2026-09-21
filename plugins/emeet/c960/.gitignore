@@ -1,0 +1,10 @@
+.venv/
+venv/
+dist/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+# Captured stills are runtime data — never committed.
+captures/

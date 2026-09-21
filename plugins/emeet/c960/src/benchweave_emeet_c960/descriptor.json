@@ -1,0 +1,64 @@
+{
+  "otdp_version": "0.3.0",
+  "descriptor_version": "0.1.0",
+  "id": "dev.emeet.c960",
+  "display_name": "EMeet SmartCam C960 4K",
+  "description": "Synthetic OTDP scaffold for the EMeet SmartCam C960 4K UVC webcam; not hardware qualified. Real V4L2 control surface; capture is documented but not declared.",
+  "identity": {
+    "strategy": "adapter",
+    "manufacturer": "EMeet",
+    "model": "SmartCam C960 4K",
+    "firmware_policy": "commissioned"
+  },
+  "integration": {
+    "mode": "adapter",
+    "adapter": {
+      "entry_point": "benchweave_emeet_c960.adapter:create_plugin",
+      "api_version": "1.1",
+      "version": "0.1.0",
+      "dependencies": [],
+      "permissions": ["scoped_transport"]
+    }
+  },
+  "transport": {
+    "type": "custom",
+    "connection_key": "emeet_c960",
+    "settings": {
+      "protocol_reference": "protocol.md"
+    }
+  },
+  "capabilities": ["identify", "read", "write"],
+  "operations": {
+    "identify": {"timeout_ms": 1000, "side_effect": "none", "retry": "never", "cancellable": true, "completion": "acknowledged"},
+    "read": {"timeout_ms": 1000, "side_effect": "none", "retry": "never", "cancellable": true, "completion": "acknowledged"},
+    "write": {"timeout_ms": 1000, "side_effect": "state_change", "retry": "never", "cancellable": true, "completion": "acknowledged"}
+  },
+  "parameters": [
+    {"name": "brightness", "description": "Image brightness (-64..64).", "type": "int", "access": "rw", "semantic": "configuration", "unit": "1", "range": [-64, 64], "binding": {"kind": "adapter", "key": "brightness"}, "read_policy": {"max_age_ms": 0, "destructive": false}, "write_policy": {"effect": "setting", "completion": "acknowledged", "retry": "never"}, "hazard_class": "none"},
+    {"name": "contrast", "description": "Image contrast (0..100).", "type": "int", "access": "rw", "semantic": "configuration", "unit": "1", "range": [0, 100], "binding": {"kind": "adapter", "key": "contrast"}, "read_policy": {"max_age_ms": 0, "destructive": false}, "write_policy": {"effect": "setting", "completion": "acknowledged", "retry": "never"}, "hazard_class": "none"},
+    {"name": "saturation", "description": "Colour saturation (0..128).", "type": "int", "access": "rw", "semantic": "configuration", "unit": "1", "range": [0, 128], "binding": {"kind": "adapter", "key": "saturation"}, "read_policy": {"max_age_ms": 0, "destructive": false}, "write_policy": {"effect": "setting", "completion": "acknowledged", "retry": "never"}, "hazard_class": "none"},
+    {"name": "hue", "description": "Hue adjustment (-40..40).", "type": "int", "access": "rw", "semantic": "configuration", "unit": "1", "range": [-40, 40], "binding": {"kind": "adapter", "key": "hue"}, "read_policy": {"max_age_ms": 0, "destructive": false}, "write_policy": {"effect": "setting", "completion": "acknowledged", "retry": "never"}, "hazard_class": "none"},
+    {"name": "white_balance_automatic", "description": "Automatic white balance on/off; gates white_balance_temperature.", "type": "bool", "access": "rw", "semantic": "configuration", "binding": {"kind": "adapter", "key": "white_balance_automatic"}, "read_policy": {"max_age_ms": 0, "destructive": false}, "write_policy": {"effect": "setting", "completion": "acknowledged", "retry": "never"}, "hazard_class": "none"},
+    {"name": "white_balance_temperature", "description": "Colour temperature in kelvin (2300..6500); inactive while white_balance_automatic is on.", "type": "int", "access": "rw", "semantic": "configuration", "unit": "1", "range": [2300, 6500], "binding": {"kind": "adapter", "key": "white_balance_temperature"}, "read_policy": {"max_age_ms": 0, "destructive": false}, "write_policy": {"effect": "setting", "completion": "acknowledged", "retry": "never"}, "hazard_class": "none"},
+    {"name": "gamma", "description": "Gamma correction (72..255).", "type": "int", "access": "rw", "semantic": "configuration", "unit": "1", "range": [72, 255], "binding": {"kind": "adapter", "key": "gamma"}, "read_policy": {"max_age_ms": 0, "destructive": false}, "write_policy": {"effect": "setting", "completion": "acknowledged", "retry": "never"}, "hazard_class": "none"},
+    {"name": "gain", "description": "Analogue gain (0..100).", "type": "int", "access": "rw", "semantic": "configuration", "unit": "1", "range": [0, 100], "binding": {"kind": "adapter", "key": "gain"}, "read_policy": {"max_age_ms": 0, "destructive": false}, "write_policy": {"effect": "setting", "completion": "acknowledged", "retry": "never"}, "hazard_class": "none"},
+    {"name": "power_line_frequency", "description": "Anti-flicker mains frequency (V4L2 menu: 0=Disabled, 1=50 Hz, 2=60 Hz).", "type": "enum", "access": "rw", "semantic": "configuration", "enum_values": ["Disabled", "50 Hz", "60 Hz"], "binding": {"kind": "adapter", "key": "power_line_frequency"}, "read_policy": {"max_age_ms": 0, "destructive": false}, "write_policy": {"effect": "setting", "completion": "acknowledged", "retry": "never"}, "hazard_class": "none"},
+    {"name": "sharpness", "description": "Sharpness (1..64).", "type": "int", "access": "rw", "semantic": "configuration", "unit": "1", "range": [1, 64], "binding": {"kind": "adapter", "key": "sharpness"}, "read_policy": {"max_age_ms": 0, "destructive": false}, "write_policy": {"effect": "setting", "completion": "acknowledged", "retry": "never"}, "hazard_class": "none"},
+    {"name": "backlight_compensation", "description": "Backlight compensation (1..2).", "type": "int", "access": "rw", "semantic": "configuration", "unit": "1", "range": [1, 2], "binding": {"kind": "adapter", "key": "backlight_compensation"}, "read_policy": {"max_age_ms": 0, "destructive": false}, "write_policy": {"effect": "setting", "completion": "acknowledged", "retry": "never"}, "hazard_class": "none"},
+    {"name": "auto_exposure", "description": "Exposure mode (V4L2 menu: 1=Manual, 3=Aperture-Priority); gates exposure_time_absolute.", "type": "enum", "access": "rw", "semantic": "configuration", "enum_values": ["Manual", "Aperture-Priority"], "binding": {"kind": "adapter", "key": "auto_exposure"}, "read_policy": {"max_age_ms": 0, "destructive": false}, "write_policy": {"effect": "setting", "completion": "acknowledged", "retry": "never"}, "hazard_class": "none"},
+    {"name": "exposure_time_absolute", "description": "Exposure time (1..5000); inactive unless auto_exposure is Manual.", "type": "int", "access": "rw", "semantic": "configuration", "unit": "1", "range": [1, 5000], "binding": {"kind": "adapter", "key": "exposure_time_absolute"}, "read_policy": {"max_age_ms": 0, "destructive": false}, "write_policy": {"effect": "setting", "completion": "acknowledged", "retry": "never"}, "hazard_class": "none"},
+    {"name": "focus_automatic_continuous", "description": "Continuous autofocus on/off; gates focus_absolute.", "type": "bool", "access": "rw", "semantic": "configuration", "binding": {"kind": "adapter", "key": "focus_automatic_continuous"}, "read_policy": {"max_age_ms": 0, "destructive": false}, "write_policy": {"effect": "setting", "completion": "acknowledged", "retry": "never"}, "hazard_class": "none"},
+    {"name": "focus_absolute", "description": "Lens focus position (0..1023); inactive while focus_automatic_continuous is on.", "type": "int", "access": "rw", "semantic": "configuration", "unit": "1", "range": [0, 1023], "binding": {"kind": "adapter", "key": "focus_absolute"}, "read_policy": {"max_age_ms": 0, "destructive": false}, "write_policy": {"effect": "setting", "completion": "acknowledged", "retry": "never"}, "hazard_class": "none"},
+    {"name": "zoom_absolute", "description": "Digital zoom (0..100).", "type": "int", "access": "rw", "semantic": "configuration", "unit": "1", "range": [0, 100], "binding": {"kind": "adapter", "key": "zoom_absolute"}, "read_policy": {"max_age_ms": 0, "destructive": false}, "write_policy": {"effect": "setting", "completion": "acknowledged", "retry": "never"}, "hazard_class": "none"}
+  ],
+  "required_features": ["otdp.core/0.3.0", "otdp.adapter/1.1"],
+  "provenance": {
+    "sources": [
+      {"title": "EMeet SmartCam C960 4K - V4L2 control reference", "reference": "docs/eMeet-4K.md", "revision": "2026-09-21"},
+      {"title": "Synthetic control protocol", "reference": "protocol.md", "revision": "0.1.0"}
+    ],
+    "test_vectors": [
+      {"id": "c960", "path": "vectors.json", "purpose": "Synthetic identify/read/write exchanges"}
+    ]
+  }
+}

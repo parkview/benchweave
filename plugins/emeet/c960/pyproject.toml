@@ -1,0 +1,15 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "benchweave-emeet-c960"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = []
+
+[project.optional-dependencies]
+test = ["benchweave-sdk==0.1.0", "pytest>=8.0"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/benchweave_emeet_c960"]
