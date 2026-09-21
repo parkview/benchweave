@@ -1,0 +1,10 @@
+{
+  "evidence": "synthetic",
+  "exchanges": [
+    {"request": "ID?\n", "response": "EMeet,SmartCam C960 4K\n"},
+    {"request": "GET brightness\n", "response": "0\n"},
+    {"request": "GET white_balance_automatic\n", "response": "1\n"},
+    {"request": "GET power_line_frequency\n", "response": "50 Hz\n"},
+    {"request": "SET brightness=32\n", "response": "OK\n"}
+  ]
+}
