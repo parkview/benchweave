@@ -147,38 +147,60 @@ settling around mid focus for this scene.
 
 ## Focus stacking
 
-The Hugin toolchain is installed on the bench for focus stacking a swept set of
-stills into one all-in-focus image.
+The bench focus-stacks a swept set of stills into one all-in-focus image:
+`align_image_stack` aligns (scale + translation, cropped to the common area),
+then `tools/focus_stack.py` blends them through a Laplacian pyramid. `enfuse`
+was tried and rejected — see the note at the end.
 
-**Install** (Ubuntu — `enfuse` and `enblend` are separate packages here, not
-`enblend-enfuse`):
-
-```bash
-sudo apt install hugin-tools enfuse   # align_image_stack + enfuse
-```
-
-**Run** — align first (the lens shift refocuses), then fuse (keep the sharpest
-pixel per region):
+**Install:**
 
 ```bash
-cd plugins/emeet/c960
-align_image_stack -a aligned_ captures/focus_*_1920x1080.jpg
-enfuse --exposure-weight=0 --saturation-weight=0 \
-       --contrast-weight=1 --hard-mask \
-       -o captures/focused.jpg aligned_*.tif
-rm aligned_*.tif                     # 26 MB of intermediates, discard
+sudo apt install hugin-tools            # align_image_stack
+uv pip install numpy scipy pillow       # fusion deps, into the shared uv root venv
 ```
 
-The `--hard-mask` contrast weighting picks whichever frame has the highest local
-contrast at each pixel — that is, the sharpest-region policy.
+**Capture** — set focus, settle 0.8s for the focus motor, then grab 8 frames and
+keep the last (auto-exposure converges during the grab):
 
-**Verdict on this bench (2026-09-21): not worth it.** A 21-frame sweep
-(600…1000) fused to a result *worse* than the best single in-focus frame. The
-bench scene has poor lighting with specular reflections/glossy surfaces, and the
-whole-frame Laplacian metric (20.2 vs 15.6 best single) is inflated by those
-highlights — contrast fusion mistakes a bright reflection for a sharp edge and
-keeps it. Revisit only with diffuse, shadow-free lighting and a matte subject;
-until then prefer a single well-focused frame.
+```bash
+v4l2-ctl -d /dev/video4 --set-ctrl=focus_automatic_continuous=0
+for f in $(seq 600 20 1000); do
+  printf -v fpad "%03d" "$f"
+  v4l2-ctl -d /dev/video4 --set-ctrl=focus_absolute="$f"
+  sleep 0.8
+  ffmpeg -y -f v4l2 -input_format mjpeg -video_size 1920x1080 -framerate 30 \
+    -i /dev/video4 -frames:v 8 -q:v 3 -update 1 "captures/focus_${fpad}_1920x1080.jpg"
+done
+v4l2-ctl -d /dev/video4 --set-ctrl=focus_automatic_continuous=1
+```
+
+0.8s settle is sufficient: frames are as sharp as a 1.2s settle, with no motion
+blur (Laplacian sharpness 33.6–42.1 across the sweep). The 8-frame grab matters
+more than the sleep — it gives auto-exposure time to converge on the new focus.
+
+**Align** — `-m` compensates the scale change from focus breathing (the lens
+changes magnification as it refocuses); `-C` crops to the area every frame
+covers:
+
+```bash
+align_image_stack -a aligned_ -m -C captures/focus_*_1920x1080.jpg
+```
+
+**Fuse** — `tools/focus_stack.py` computes a per-pixel focus map (local Laplacian
+variance), softmax-weights each frame per pixel, then blends through a Laplacian
+pyramid so fine detail stays from a single frame while transitions are seamless:
+
+```bash
+uv run --no-project python tools/focus_stack.py   # -> captures/focused_pyramid.jpg
+```
+
+The fused image beats every single frame (Laplacian sharpness 42.8 vs best 39.3).
+
+**Why not `enfuse`.** `enfuse --hard-mask` picks the sharpest pixel per region
+with a hard cut; any residual misalignment or a specular highlight becomes a
+visible seam, and on this bench it produced a vertically banded "three photos
+stacked" result worse than the best single frame. Pyramid blending fuses across
+scales instead, which is robust to those reflections.
 
 ## Gotchas
 
