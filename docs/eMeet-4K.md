@@ -53,7 +53,7 @@ to make the underlying control settable.
 | `auto_exposure` | menu | 1 Manual / 3 Aperture-Priority | 3 | gate for `exposure_time_absolute` |
 | `exposure_time_absolute` | int | 1…5000 | 300 | `inactive` in aperture-priority |
 | `focus_automatic_continuous` | bool | 0/1 | 1 | **continuous autofocus** (gate for focus) |
-| `focus_absolute` | int | 0…1023 | 192 | `inactive` while AF on |
+| `focus_absolute` | int | 0…1023 | 192 | `inactive` while AF on; 0 = ∞, 1023 = close-up |
 | `zoom_absolute` | int | 0…100 | 0 | digital zoom |
 
 ## Commands
@@ -134,6 +134,10 @@ convert photo.jpg -colorspace Gray -convolve '0,-1,0,-1,4,-1,0,-1,0' \
   -format "%[fx:standard_deviation*1000]" info:
 ```
 
+**Focus-axis direction (confirmed).** The 0…1023 axis runs **far → near**:
+`0` is **infinite focus** (distant subjects sharp), and `1023` (the top of the
+range) is **close-up**. To focus near, raise the value; to focus far, lower it.
+
 **Interpretation.** The focus control demonstrably works (≈8× sharpness spread
 across the range), but the curve is multi-peaked (≈20%, ≈40–50%, ≈90%) rather
 than a single peak. That is expected when the frame contains objects at several
@@ -141,9 +145,62 @@ depths — a whole-frame metric spikes wherever *any* region is in focus. The
 autofocus reference (15.5) lands near the mid-range (512), consistent with AF
 settling around mid focus for this scene.
 
-To map the **near↔far direction** of the 0…1023 axis, re-run the sweep against a
-single subject at a known distance with a plain background (e.g. the DUT at a
-fixed 300 mm), so exactly one peak appears and its position names the direction.
+## Focus stacking
+
+The bench focus-stacks a swept set of stills into one all-in-focus image:
+`align_image_stack` aligns (scale + translation, cropped to the common area),
+then `tools/focus_stack.py` blends them through a Laplacian pyramid. `enfuse`
+was tried and rejected — see the note at the end.
+
+**Install:**
+
+```bash
+sudo apt install hugin-tools            # align_image_stack
+uv pip install numpy scipy pillow       # fusion deps, into the shared uv root venv
+```
+
+**Capture** — set focus, settle 0.8s for the focus motor, then grab 8 frames and
+keep the last (auto-exposure converges during the grab):
+
+```bash
+v4l2-ctl -d /dev/video4 --set-ctrl=focus_automatic_continuous=0
+for f in $(seq 600 20 1000); do
+  printf -v fpad "%03d" "$f"
+  v4l2-ctl -d /dev/video4 --set-ctrl=focus_absolute="$f"
+  sleep 0.8
+  ffmpeg -y -f v4l2 -input_format mjpeg -video_size 1920x1080 -framerate 30 \
+    -i /dev/video4 -frames:v 8 -q:v 3 -update 1 "captures/focus_${fpad}_1920x1080.jpg"
+done
+v4l2-ctl -d /dev/video4 --set-ctrl=focus_automatic_continuous=1
+```
+
+0.8s settle is sufficient: frames are as sharp as a 1.2s settle, with no motion
+blur (Laplacian sharpness 33.6–42.1 across the sweep). The 8-frame grab matters
+more than the sleep — it gives auto-exposure time to converge on the new focus.
+
+**Align** — `-m` compensates the scale change from focus breathing (the lens
+changes magnification as it refocuses); `-C` crops to the area every frame
+covers:
+
+```bash
+align_image_stack -a aligned_ -m -C captures/focus_*_1920x1080.jpg
+```
+
+**Fuse** — `tools/focus_stack.py` computes a per-pixel focus map (local Laplacian
+variance), softmax-weights each frame per pixel, then blends through a Laplacian
+pyramid so fine detail stays from a single frame while transitions are seamless:
+
+```bash
+uv run --no-project python tools/focus_stack.py   # -> captures/focused_pyramid.jpg
+```
+
+The fused image beats every single frame (Laplacian sharpness 42.8 vs best 39.3).
+
+**Why not `enfuse`.** `enfuse --hard-mask` picks the sharpest pixel per region
+with a hard cut; any residual misalignment or a specular highlight becomes a
+visible seam, and on this bench it produced a vertically banded "three photos
+stacked" result worse than the best single frame. Pyramid blending fuses across
+scales instead, which is robust to those reflections.
 
 ## Gotchas
 
