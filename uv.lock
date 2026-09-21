@@ -156,8 +156,8 @@ dev = [
 
 [[package]]
 name = "benchweave-sdk"
-version = "0.0.2"
-source = { git = "https://github.com/platima/benchweave-sdk?branch=fix%2Fportability-and-correctness#a1e7562f95d8124cfa0bf049d9c8c4e350fb9f90" }
+version = "0.0.4"
+source = { git = "https://github.com/platima/benchweave-sdk?branch=fix%2Fportability-and-correctness#5089dc6bd5637ed6523c42b305416be8940810c8" }
 dependencies = [
     { name = "click" },
     { name = "jsonschema" },

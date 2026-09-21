@@ -48,14 +48,11 @@ dev = [
 ]
 
 [tool.uv.sources]
-# The PyPI 0.0.2 wheel predates the standards renumbering (it vendors
-# otdp-v0.3.0; the daq profile lives in the renumbered otdp/0.1.0 corpus).
-# Track upstream main until the next SDK release, then pin ">=0.0.3".
-# The PyPI 0.0.2 wheel predates the standards renumbering (it vendors
-# otdp-v0.3.0; the daq profile lives in the renumbered otdp/0.1.0 corpus),
-# and installing upstream from git fails on Windows until the .gitattributes
-# fix merges (madeinoz67/benchweave-sdk#9). Until an SDK 0.0.3 release, pin
-# the fork branch carrying those fixes; then switch to 'benchweave-sdk>=0.0.3'.
+# The plugin targets OTDP 0.2.0, which the SDK vendors from 0.0.3. Installing
+# the SDK from upstream git still fails on Windows until the .gitattributes
+# fix merges (madeinoz67/benchweave-sdk#9), so this pins the fork branch that
+# carries upstream main plus that fix. uv.lock holds the exact commit. Once a
+# release includes #9, switch to a plain 'benchweave-sdk>=<that release>'.
 benchweave-sdk = { git = "https://github.com/platima/benchweave-sdk", branch = "fix/portability-and-correctness" }
 
 [project.scripts]

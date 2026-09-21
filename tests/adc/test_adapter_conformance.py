@@ -24,6 +24,9 @@ from plugins.adc_6ch_12bit.adapter import (
 
 DESCRIPTOR_PATH = Path(__file__).resolve().parents[2] / "plugins/adc_6ch_12bit/descriptor.json"
 DESCRIPTOR: dict[str, Any] = json.loads(DESCRIPTOR_PATH.read_text(encoding="utf-8"))
+# The runtime and measurement schemas are looked up under the OTDP version the
+# descriptor declares, so a version move is made in one place: the descriptor.
+OTDP_SCHEMAS = f"otdp/{DESCRIPTOR['otdp_version']}"
 
 CONFIGURE = "otdp.daq.configure/1.0.0"
 ARM = "otdp.daq.arm/1.0.0"
@@ -207,7 +210,7 @@ def test_capture_sequence_configure_arm_events_fetch_abort() -> None:
     assert configure["data"]["result"]["configuration_id"] == "cfg-1"
 
     assert event is not None
-    validate(event, "otdp/0.1.0/otdp-runtime.schema.json", "event")
+    validate(event, f"{OTDP_SCHEMAS}/otdp-runtime.schema.json", "event")
     assert event["kind"] == "telemetry"
     assert event["x-adc-sample"] == {
         "counter": 7,
@@ -216,7 +219,7 @@ def test_capture_sequence_configure_arm_events_fetch_abort() -> None:
     }
 
     dataset = fetch["data"]["result"]
-    validate(dataset, "otdp/0.1.0/otdp-measurement.schema.json", "dataset")
+    validate(dataset, f"{OTDP_SCHEMAS}/otdp-measurement.schema.json", "dataset")
     assert dataset["status"] == "partial"  # acquisition still running at fetch
     values = {variable["id"]: variable["values"] for variable in dataset["variables"]}
     assert values == {"a0": [7.0], "a1": [8.0]}  # the second sample, first consumed
