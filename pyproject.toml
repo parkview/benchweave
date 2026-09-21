@@ -61,6 +61,7 @@ benchweave-sdk = { git = "https://github.com/platima/benchweave-sdk", branch = "
 [project.scripts]
 benchweave-adc = "benchweave.__main__:main"
 benchweave-adc-mcp = "benchweave.mcp_server:main"
+nanodla-mcp = "benchweave.nanodla_mcp:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/benchweave", "plugins"]
