@@ -13,13 +13,13 @@ import csv
 import json
 import math
 import re
-import shutil
 import sqlite3
-import subprocess
 import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
+
+from send2trash import send2trash  # type: ignore[import-untyped]
 
 from plugins.adc_6ch_12bit.config import CHANNEL_KEYS, DEFAULT_CONFIG, PALETTE, load_config
 from plugins.adc_6ch_12bit.discovery import capture_dir
@@ -44,8 +44,12 @@ class CaptureLibrary:
     # -- storage -------------------------------------------------------------
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self._db_path)
+        # timeout + busy_timeout: the web app and the MCP server are separate
+        # processes sharing this database; without them a concurrent write
+        # surfaces as an immediate "database is locked" error.
+        conn = sqlite3.connect(self._db_path, timeout=5.0)
         conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA busy_timeout = 5000")
         conn.row_factory = sqlite3.Row
         return conn
 
@@ -76,6 +80,14 @@ class CaptureLibrary:
                 conn.execute(
                     "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)"
                 )
+                # WAL is persistent: readers and the sibling MCP process no
+                # longer block a writer wholesale.
+                conn.execute("PRAGMA journal_mode = WAL")
+                # Additive migration: captures.missing_since marks rows whose
+                # files are currently absent from disk (see _reconcile).
+                columns = {row["name"] for row in conn.execute("PRAGMA table_info(captures)")}
+                if "missing_since" not in columns:
+                    conn.execute("ALTER TABLE captures ADD COLUMN missing_since TEXT")
         finally:
             conn.close()
 
@@ -106,14 +118,28 @@ class CaptureLibrary:
         return match.group("serial"), match.group("tag"), stamp
 
     def _reconcile(self, conn: sqlite3.Connection, stems: set[str]) -> None:
+        """Sync capture rows with the files on disk - without destroying metadata.
+
+        Rows whose files are absent are only MARKED missing (``missing_since``),
+        never deleted: annotations and power-analysis settings hang off these
+        rows via ON DELETE CASCADE, and a temporarily unmounted drive, a sync
+        client mid-flight, or an emptied captures directory must not wipe them.
+        Hard deletion happens in exactly one place - the explicit ``trash`` API.
+        """
+        placeholders = ",".join("?" for _ in stems)
         with conn:
             for stem in stems:
                 conn.execute(
                     "INSERT OR IGNORE INTO captures (stem, project) VALUES (?, NULL)", (stem,)
                 )
             conn.execute(
-                "DELETE FROM captures WHERE stem NOT IN (" + ",".join("?" for _ in stems) + ")",
+                f"UPDATE captures SET missing_since = NULL WHERE stem IN ({placeholders})",
                 tuple(stems),
+            )
+            conn.execute(
+                "UPDATE captures SET missing_since = ? WHERE missing_since IS NULL "
+                f"AND stem NOT IN ({placeholders})",
+                (datetime.now().isoformat(timespec="seconds"), *stems),
             )
 
     # -- projects ------------------------------------------------------------
@@ -415,12 +441,22 @@ class CaptureLibrary:
         self.set_setting("assertions", json.dumps(cleaned))
         return cleaned
 
-    def check_assertions(self, stem: str) -> dict[str, object]:
+    def check_assertions(
+        self, stem: str, parsed: dict[str, object] | None = None
+    ) -> dict[str, object]:
+        """Evaluate the global assertions against a capture.
+
+        ``parsed`` lets a caller that already holds ``parse_csv`` output (the
+        report generator) avoid re-reading and re-parsing the CSV.
+        """
         assertions = self.get_assertions()
-        csv = self.file_for(stem, "csv")
         series: list[dict[str, Any]] = []
-        if csv is not None:
-            data = self.parse_csv(csv)
+        data = parsed
+        if data is None:
+            csv = self.file_for(stem, "csv")
+            if csv is not None:
+                data = self.parse_csv(csv)
+        if data is not None:
             series = cast(list[dict[str, Any]], data.get("series") or [])
         by_name: dict[str, dict[str, Any]] = {}
         for item in series:
@@ -578,32 +614,49 @@ class CaptureLibrary:
                 trashed.append({"name": path.name})
             else:
                 errors.append({"name": path.name, "detail": detail})
-        # Drop metadata for stems that no longer have any file on disk.
-        self.scan()
+        # The one place metadata rows die with their files: a stem the user
+        # explicitly trashed, once no file of any kind remains on disk.
+        gone = sorted(
+            stem
+            for stem in set(stems)
+            if not any(
+                (self._captures_dir / f"{stem}{suffix}").is_file() for suffix in _FILE_SUFFIXES
+            )
+        )
+        if gone:
+            conn = self._connect()
+            try:
+                with self._lock, conn:
+                    conn.execute(
+                        "DELETE FROM captures WHERE stem IN (" + ",".join("?" for _ in gone) + ")",
+                        tuple(gone),
+                    )
+            finally:
+                conn.close()
         return {"trashed": trashed, "errors": errors}
 
     @staticmethod
     def _trash_one(path: Path) -> tuple[bool, str]:
-        if shutil.which("gio"):
-            argv = ["gio", "trash", str(path)]
-        elif shutil.which("trash-put"):
-            argv = ["trash-put", str(path)]
-        else:
-            return False, "no trash tool available (install gio or trash-cli)"
+        """Move one file to the OS trash/recycle bin; never hard-delete."""
         try:
-            subprocess.run(argv, check=True, capture_output=True, text=True)
-        except subprocess.CalledProcessError as exc:
-            detail = (exc.stderr or exc.stdout or "").strip() or "trash failed"
-            return False, detail
+            send2trash(str(path))
+        except OSError as exc:
+            return False, str(exc) or "trash failed"
         return True, str(path)
 
     # -- CSV reading ---------------------------------------------------------
 
     def _read_metadata(self, path: Path) -> tuple[dict[str, str], list[dict[str, str]]]:
         """Return (scalar metadata, channel descriptors) from the ``#`` header."""
+        return self._metadata_from_lines(path.read_text(encoding="utf-8").splitlines())
+
+    @staticmethod
+    def _metadata_from_lines(
+        lines: list[str],
+    ) -> tuple[dict[str, str], list[dict[str, str]]]:
         scalars: dict[str, str] = {}
         descs: list[dict[str, str]] = []
-        for line in path.read_text().splitlines():
+        for line in lines:
             if not line.startswith("#"):
                 continue
             key, sep, value = line[1:].lstrip().partition(": ")
@@ -636,11 +689,12 @@ class CaptureLibrary:
 
     def parse_csv(self, path: Path | str) -> dict[str, object]:
         path = Path(path)
-        scalars, descs = self._read_metadata(path)
+        # One read serves both the metadata header and the data rows; the
+        # file was previously read (and decoded) twice per call.
+        lines = path.read_text(encoding="utf-8").splitlines()
+        scalars, descs = self._metadata_from_lines(lines)
 
-        data_lines = [
-            line for line in path.read_text().splitlines() if line and not line.startswith("#")
-        ]
+        data_lines = [line for line in lines if line and not line.startswith("#")]
         if not data_lines:
             return {
                 "name": path.name,

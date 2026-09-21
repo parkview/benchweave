@@ -12,9 +12,11 @@ from pathlib import Path
 from typing import Any, cast
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.datastructures import Headers
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from benchweave.web.board import BoardManager
 from benchweave.web.library import CaptureLibrary
@@ -23,6 +25,9 @@ from plugins.adc_6ch_12bit.protocol import AVERAGING_CHOICES, CHANNEL_MASK_ALL
 
 STATIC_DIR = Path(__file__).parent / "static"
 SSE_MIN_INTERVAL = 0.033  # downsample the live view to ~30 Hz
+MAX_BODY_BYTES = 20 * 1024 * 1024  # request-body ceiling (graph PNGs are the largest)
+MAX_PNG_BYTES = 10 * 1024 * 1024  # decoded graph-export image ceiling
+MAX_DATA_POINTS = 5000  # default per-channel points served by /data
 
 manager = BoardManager()
 library = CaptureLibrary()
@@ -36,6 +41,75 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="BenchWeave ADC", lifespan=lifespan)
+
+
+class _BodyTooLarge(HTTPException):
+    """Raised from the metered receive channel once a body outgrows the cap."""
+
+    def __init__(self) -> None:
+        super().__init__(status_code=413, detail="request body too large")
+
+
+class BodyLimitMiddleware:
+    """Reject request bodies over ``MAX_BODY_BYTES``, however they are framed.
+
+    A numeric ``Content-Length`` over the cap is rejected up front with 413 and
+    ``Transfer-Encoding: chunked`` is refused with 411 (uvicorn/h11 never
+    delivers more bytes than a declared length, so those two checks already
+    bound every HTTP/1.1 body). As a server-agnostic backstop the receive
+    channel is also metered, so a body that outgrows the cap mid-stream is cut
+    off with a 413 no matter how the server framed it.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        headers = Headers(scope=scope)
+        if "chunked" in headers.get("transfer-encoding", "").lower():
+            response = JSONResponse({"detail": "length required"}, status_code=411)
+            await response(scope, receive, send)
+            return
+        length = headers.get("content-length", "")
+        if length.isdigit() and int(length) > MAX_BODY_BYTES:
+            response = JSONResponse({"detail": "request body too large"}, status_code=413)
+            await response(scope, receive, send)
+            return
+
+        received = 0
+        response_started = False
+
+        async def metered_receive() -> Message:
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > MAX_BODY_BYTES:
+                    raise _BodyTooLarge()
+            return message
+
+        async def tracking_send(message: Message) -> None:
+            nonlocal response_started
+            if message["type"] == "http.response.start":
+                response_started = True
+            await send(message)
+
+        try:
+            await self.app(scope, metered_receive, tracking_send)
+        except _BodyTooLarge:
+            # FastAPI routes re-raise HTTPException from their body read, so
+            # the router already answered with 413; this backstop covers body
+            # reads outside the router.
+            if response_started:
+                raise
+            response = JSONResponse({"detail": "request body too large"}, status_code=413)
+            await response(scope, receive, send)
+
+
+app.add_middleware(BodyLimitMiddleware)
 
 
 class ConnectBody(BaseModel):
@@ -146,6 +220,8 @@ def get_config() -> dict[str, Any]:
 def put_config(body: dict[str, Any]) -> dict[str, Any]:
     try:
         return manager.set_config(body)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -210,6 +286,8 @@ def graph_export(body: GraphExportBody) -> dict[str, object]:
         data = base64.b64decode(image, validate=True)
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=422, detail="invalid PNG data") from exc
+    if len(data) > MAX_PNG_BYTES:
+        raise HTTPException(status_code=413, detail="image too large")
     return manager.save_graph_png(data)
 
 
@@ -223,7 +301,10 @@ def graph_reveal() -> dict[str, object]:
 
 @app.get("/api/stream")
 async def stream(request: Request) -> StreamingResponse:
-    queue = manager.subscribe()
+    try:
+        queue = manager.subscribe()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     async def events() -> AsyncIterator[str]:
         last = 0.0
@@ -270,14 +351,35 @@ def retention_suggestions() -> dict[str, object]:
 
 
 @app.get("/api/captures/{stem}/data")
-def capture_data(stem: str) -> dict[str, object]:
+def capture_data(stem: str, max_points: int = MAX_DATA_POINTS) -> dict[str, object]:
     path = library.file_for(stem, "csv")
     if path is None:
         raise HTTPException(status_code=404, detail=f"no CSV for '{stem}'")
     try:
-        return library.parse_csv(path)
+        data = library.parse_csv(path)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if max_points > 0:
+        data["series"] = [
+            {**s, "points": _decimate(cast(list[Any], s["points"]), max_points)}
+            for s in cast(list[dict[str, Any]], data["series"])
+        ]
+    return data
+
+
+def _decimate(points: list[Any], limit: int) -> list[Any]:
+    """Every n-th point so at most ``limit`` survive; the final point replaces
+    the last stride sample when the budget is full."""
+    if len(points) <= limit:
+        return points
+    step = (len(points) + limit - 1) // limit
+    sampled = points[::step]
+    if sampled[-1] is not points[-1]:
+        if len(sampled) >= limit:
+            sampled[-1] = points[-1]
+        else:
+            sampled.append(points[-1])
+    return sampled
 
 
 @app.get("/api/captures/{stem}/file")
@@ -287,7 +389,13 @@ def capture_file(stem: str, ext: str = "csv") -> FileResponse:
     path = library.file_for(stem, ext)
     if path is None:
         raise HTTPException(status_code=404, detail=f"no {ext} for '{stem}'")
-    return FileResponse(path)
+    response = FileResponse(path)
+    if ext == "html":
+        # Serve stored HTML in a unique origin: report files (or anything
+        # dropped into the captures directory) must not script against the
+        # gateway API. allow-scripts keeps the report itself working.
+        response.headers["Content-Security-Policy"] = "sandbox allow-scripts"
+    return response
 
 
 @app.get("/api/captures/{stem}/annotations")
@@ -356,7 +464,7 @@ def generate_report(stem: str, body: ReportBody) -> dict[str, object]:
             min(body.zoom.lo, body.zoom.hi),
             max(body.zoom.lo, body.zoom.hi),
         )
-    assertions = cast(list[dict[str, Any]], library.check_assertions(stem)["results"])
+    assertions = cast(list[dict[str, Any]], library.check_assertions(stem, parsed=data)["results"])
     html = build_report(
         data,
         markers,
@@ -367,12 +475,14 @@ def generate_report(stem: str, body: ReportBody) -> dict[str, object]:
         zoom,
     )
     out = csv.with_suffix(".html")
-    out.write_text(html)
+    out.write_text(html, encoding="utf-8")
     return {"stem": stem, "name": out.name, "path": str(out)}
 
 
 @app.post("/api/captures/{stem}/project")
 def capture_assign(stem: str, body: AssignProjectBody) -> dict[str, object]:
+    if library.file_for(stem, "csv") is None and library.file_for(stem, "png") is None:
+        raise HTTPException(status_code=404, detail=f"no capture '{stem}'")
     try:
         return library.assign_project(stem, body.project)
     except ValueError as exc:

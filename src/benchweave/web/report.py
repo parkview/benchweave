@@ -11,6 +11,7 @@ saved next to the CSV and shared as-is.
 
 from __future__ import annotations
 
+import html
 from typing import Any, cast
 
 # Mirrors the COLORS palette in static/app.js.
@@ -797,7 +798,10 @@ def _render_assertions(results: list[dict[str, Any]]) -> str:
 
 
 def _esc(text: str) -> str:
-    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    # html.escape with quotes: _esc output lands in attribute values too
+    # (aria-label), where an unescaped double quote breaks out of the
+    # attribute even with < and > handled.
+    return html.escape(text, quote=True)
 
 
 def _css() -> str:

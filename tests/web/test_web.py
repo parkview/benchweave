@@ -297,6 +297,7 @@ def test_reveal_graph_png_opens_last_saved(tmp_path: Path) -> None:
     png.write_bytes(b"png")
     manager._last_png_path = str(png)
     with (
+        mock.patch("benchweave.web.board.sys.platform", "linux"),
         mock.patch("benchweave.web.board.shutil.which", return_value="/usr/bin/dolphin"),
         mock.patch("benchweave.web.board.subprocess.Popen") as popen,
     ):
@@ -308,11 +309,30 @@ def test_reveal_graph_png_opens_last_saved(tmp_path: Path) -> None:
 def test_reveal_graph_png_falls_back_to_capture_dir(tmp_path: Path) -> None:
     manager = BoardManager()
     manager._last_png_path = None
+
+    def which(tool: str) -> str | None:
+        return "/usr/bin/xdg-open" if tool == "xdg-open" else None
+
     with (
+        mock.patch("benchweave.web.board.sys.platform", "linux"),
         mock.patch("benchweave.web.board.capture_dir", return_value=tmp_path),
-        mock.patch("benchweave.web.board.shutil.which", return_value=None),
+        mock.patch("benchweave.web.board.shutil.which", side_effect=which),
         mock.patch("benchweave.web.board.subprocess.Popen") as popen,
     ):
         result = manager.reveal_graph_png()
     assert result["path"] == str(tmp_path)
-    popen.assert_called_once_with(["xdg-open", str(tmp_path)])
+    popen.assert_called_once_with(["/usr/bin/xdg-open", str(tmp_path)])
+
+
+def test_reveal_graph_png_uses_explorer_on_windows(tmp_path: Path) -> None:
+    manager = BoardManager()
+    png = tmp_path / "adc_X.png"
+    png.write_bytes(b"png")
+    manager._last_png_path = str(png)
+    with (
+        mock.patch("benchweave.web.board.sys.platform", "win32"),
+        mock.patch("benchweave.web.board.subprocess.Popen") as popen,
+    ):
+        result = manager.reveal_graph_png()
+    assert result["path"] == str(png)
+    popen.assert_called_once_with(["explorer", "/select,", str(png)])
