@@ -32,9 +32,9 @@ identity and control are exposed through V4L2 (`v4l2-ctl`), capture through
 
 - `capture`/`stream` — the host loader does not run external-plugin capture; the
   working capture path is the MCP service (see §7).
-- Any `otdp.camera/*` class — OTDP 0.2.0 defines no camera class (device-classes
-  §1 lists cameras as "not yet defined"). The plugin is an **unclassified core
-  integration**.
+- Any `otdp.camera/*` class — no published OTDP version defines a camera class
+  (`device-classes` §1 lists cameras as "not yet defined"). The plugin is an
+  **unclassified core integration**.
 - Hardware qualification — no device is contacted; the scaffold is labelled
   synthetic.
 
@@ -63,12 +63,16 @@ Three distinct trust levels, kept separate throughout:
 
 ## 5. Descriptor
 
-`src/benchweave_emeet_c960/descriptor.json`, validated against
-`standards/otdp/0.2.0/otdp-device-descriptor.schema.json`.
+`src/benchweave_emeet_c960/descriptor.json`, validated by
+`benchweave_sdk.validation.validate_descriptor` against the SDK-bundled OTDP
+**0.3.0** schema. (The authoring SDK ships 0.3.0; the repo's
+`standards/otdp/0.2.0` corpus is behind the SDK and its schema would reject a
+0.2.0 descriptor, so the plugin targets 0.3.0 to match `validate_descriptor` and
+the nanoDLA scaffold.)
 
-- `otdp_version`: `"0.2.0"` (the repo's latest published standard; the nanoDLA
-  scaffold's `"0.3.0"` is ahead of the repo and is not used here).
-- `descriptor_version`: `"1.0.0"` (matches the 0.2.0 reference examples).
+- `otdp_version`: `"0.3.0"` (matches the nanoDLA scaffold and the SDK's bundled
+  contract, which is what `validate_descriptor` actually checks).
+- `descriptor_version`: `"0.1.0"` (mirrors the nanoDLA 0.3.0 scaffold).
 - `id`: `"dev.emeet.c960"`.
 - `display_name`: `"EMeet SmartCam C960 4K"`.
 - `description`: states scaffold status and that it is not hardware qualified.
@@ -95,20 +99,28 @@ Three distinct trust levels, kept separate throughout:
 
 **Capabilities:** `["identify", "read", "write"]`.
 
+**Required features:** `["otdp.core/0.3.0", "otdp.adapter/1.1"]` (0.3.0 mandates
+`otdp.core/0.3.0`; `otdp.adapter/1.1` reflects the adapter API).
+
+**Provenance** (required in 0.3.0): `sources` traces the descriptor to
+`docs/eMeet-4K.md` (revision `2026-09-21`); `test_vectors` points at
+`vectors.json` as the synthetic identify/read/write exchanges.
+
 **Operations** (policies per the schema):
 
 | Operation | timeout_ms | side_effect | retry | cancellable | completion |
 |---|---|---|---|---|---|
 | `identify` | 1000 | none | never | true | acknowledged |
 | `read` | 1000 | none | never | true | acknowledged |
-| `write` | 1000 | setting | never | true | acknowledged |
+| `write` | 1000 | state_change | never | true | acknowledged |
 
 **Parameters — the 16 V4L2 controls** (real, from `docs/eMeet-4K.md` control
 table). All are `access: "rw"`, `semantic: "configuration"`,
 `hazard_class: "none"`, `binding: {"kind": "adapter", "key": "<v4l2 control name>"}`,
 `read_policy: {"max_age_ms": 0, "destructive": false}`, and
 `write_policy: {"effect": "setting", "retry": "never"}` with `completion` set per
-the control (below).
+the control (below). Integer controls carry `unit: "1"` (dimensionless — required
+for `int`/`float` in 0.3.0); `bool` and `enum` controls carry no `unit`.
 
 | Control | type | range / enum | gated by |
 |---|---|---|---|
@@ -182,7 +194,7 @@ Using `benchweave_sdk.testing.MockHost`/`MockContext`,
 `benchweave_sdk.validation.validate_descriptor`/`validate_result`, and
 `benchweave_sdk.conformance.check_lifecycle`, mirroring the nanoDLA suite:
 
-- `validate_descriptor` passes against the 0.2.0 schema.
+- `validate_descriptor` passes against the SDK-bundled 0.3.0 schema.
 - Happy path: `identify`, `read` (a representative control), `write` (set + read
   back).
 - No-transmit-before-dispatch: cancelled, expired, bad arguments, wrong context —
@@ -214,8 +226,12 @@ plugins/emeet/c960/
 
 ## 10. Contract references
 
+- `benchweave-sdk` bundled contracts (`otdp-v0.3.0/otdp-device-descriptor.schema.json`,
+  `otdp-v0.3.0/otdp-runtime.schema.json`) — the authoritative descriptor/runtime
+  contracts the SDK's `validate_descriptor`/`validate_result` actually check.
 - `standards/otdp/0.2.0/otdp-specification.md` — core operations, adapter ABI 1.1,
-  error codes, transport (§6.4 adapter transports).
-- `standards/otdp/0.2.0/otdp-device-descriptor.schema.json` — descriptor contract.
+  error codes, transport (§6.4 adapter transports); the repo's published standard
+  (0.2.0) lags the authoring SDK (0.3.0), so field-level detail defers to the SDK
+  contracts above.
 - `standards/otdp/0.2.0/device-classes.md` — §1 establishes no camera class exists.
 - `docs/device-developer-guide.md`, `docs/develop-your-device.md` — P1–P5 workflow.
