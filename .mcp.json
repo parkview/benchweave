@@ -2,7 +2,7 @@
   "mcpServers": {
     "benchweave-adc": {
       "command": "uv",
-      "args": ["run", "benchweave-mcp"]
+      "args": ["run", "benchweave-adc-mcp"]
     },
     "benchweave-nanodla": {
       "command": "uv",

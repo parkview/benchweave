@@ -8,7 +8,10 @@ import pytest
 
 from benchweave.web.library import CaptureLibrary
 
-STEM = "adc_1234_test_20260914_120000"
+# scan() ages a capture by the stamp in its stem against the real clock, so the
+# stamp is today's: a fixed date turns "captured today" false once it is a
+# retention period old (the original 20260914 did, on 21 September).
+STEM = f"adc_1234_test_{datetime.now():%Y%m%d_%H%M%S}"
 
 CSV = (
     "# profile: default\n"
@@ -307,9 +310,7 @@ def test_power_clean_invalid(library: CaptureLibrary) -> None:
 
 
 def test_power_reuse_by_matching_names(library: CaptureLibrary) -> None:
-    library.set_power(
-        STEM, {"mode": "load-step", "rails": [{"v": "Voltage", "i": "Current"}]}
-    )
+    library.set_power(STEM, {"mode": "load-step", "rails": [{"v": "Voltage", "i": "Current"}]})
 
     stem2 = "adc_5678_test2_20260914_130000"
     (library._captures_dir / f"{stem2}.csv").write_text(CSV)
@@ -323,9 +324,7 @@ def test_power_reuse_by_matching_names(library: CaptureLibrary) -> None:
 
 
 def test_power_reuse_skips_unmatched_names(library: CaptureLibrary) -> None:
-    library.set_power(
-        STEM, {"mode": "sleep", "rails": [{"v": "3V3", "i": "mA"}]}
-    )
+    library.set_power(STEM, {"mode": "sleep", "rails": [{"v": "3V3", "i": "mA"}]})
 
     stem2 = "adc_5678_test2_20260914_130000"
     (library._captures_dir / f"{stem2}.csv").write_text(CSV)
@@ -346,9 +345,7 @@ def test_power_default_mode_invalid_falls_back(library: CaptureLibrary) -> None:
 
 
 def test_power_pruned_when_capture_deleted(library: CaptureLibrary) -> None:
-    library.set_power(
-        STEM, {"mode": "sleep", "rails": [{"v": "Voltage", "i": "Current"}]}
-    )
+    library.set_power(STEM, {"mode": "sleep", "rails": [{"v": "Voltage", "i": "Current"}]})
     assert library.get_power(STEM)["source"] == "capture"
 
     (library._captures_dir / f"{STEM}.csv").unlink()

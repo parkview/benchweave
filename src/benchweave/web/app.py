@@ -153,9 +153,7 @@ def put_config(body: dict[str, Any]) -> dict[str, Any]:
 @app.post("/api/averaging")
 def set_averaging(body: AveragingBody) -> dict[str, object]:
     if body.n not in AVERAGING_CHOICES:
-        raise HTTPException(
-            status_code=422, detail=f"averaging must be one of {AVERAGING_CHOICES}"
-        )
+        raise HTTPException(status_code=422, detail=f"averaging must be one of {AVERAGING_CHOICES}")
     try:
         return manager.set_averaging(body.n)
     except Exception as exc:
@@ -358,12 +356,15 @@ def generate_report(stem: str, body: ReportBody) -> dict[str, object]:
             min(body.zoom.lo, body.zoom.hi),
             max(body.zoom.lo, body.zoom.hi),
         )
-    assertions = cast(
-        list[dict[str, Any]], library.check_assertions(stem)["results"]
-    )
+    assertions = cast(list[dict[str, Any]], library.check_assertions(stem)["results"])
     html = build_report(
-        data, markers, lo, hi, body.power.model_dump() if body.power else None,
-        assertions, zoom,
+        data,
+        markers,
+        lo,
+        hi,
+        body.power.model_dump() if body.power else None,
+        assertions,
+        zoom,
     )
     out = csv.with_suffix(".html")
     out.write_text(html)

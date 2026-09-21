@@ -35,5 +35,5 @@ jobs:
           uv venv "$RUNNER_TEMP/benchweave-smoke"
           uv pip install --python "$RUNNER_TEMP/benchweave-smoke/bin/python" dist/*.whl
           cd "$RUNNER_TEMP"
-          "$RUNNER_TEMP/benchweave-smoke/bin/benchweave"
+          "$RUNNER_TEMP/benchweave-smoke/bin/benchweave-adc"
           "$RUNNER_TEMP/benchweave-smoke/bin/python" -c 'from importlib.resources import files; assert files("benchweave").joinpath("py.typed").is_file()'

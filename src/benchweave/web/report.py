@@ -229,24 +229,42 @@ def build_report(
         zhi = max(float(cast(Any, zoom[0])), float(cast(Any, zoom[1])))
 
     svg = _render_svg(
-        name, series, left_idx, right_idx, 0.0, duration,
-        y_left, y_right, lo, hi, markers, plo, phi, zlo, zhi,
+        name,
+        series,
+        left_idx,
+        right_idx,
+        0.0,
+        duration,
+        y_left,
+        y_right,
+        lo,
+        hi,
+        markers,
+        plo,
+        phi,
+        zlo,
+        zhi,
     )
 
     zoom_block = ""
     if zlo is not None and zhi is not None:
-        zoom_markers = [
-            m for m in markers if zlo <= float(cast(Any, m.get("t", 0.0))) <= zhi
-        ]
+        zoom_markers = [m for m in markers if zlo <= float(cast(Any, m.get("t", 0.0))) <= zhi]
         zoom_svg = _render_svg(
-            f"{name} — zoom", series, left_idx, right_idx, zlo, zhi,
+            f"{name} — zoom",
+            series,
+            left_idx,
+            right_idx,
+            zlo,
+            zhi,
             _pad(_yrange(left_idx, zlo, zhi)),
             _pad(_yrange(right_idx, zlo, zhi)),
-            None, None, zoom_markers,
+            None,
+            None,
+            zoom_markers,
         )
         zoom_block = (
             f'<section class="zoom"><h2>Zoom {_fmt_time(zlo)} → {_fmt_time(zhi)}</h2>'
-            f'{zoom_svg}</section>'
+            f"{zoom_svg}</section>"
         )
 
     notes_rows = ""
@@ -260,11 +278,7 @@ def build_report(
             f'<span class="ntime">{_fmt_time(t)}</span>'
             f'<span class="ntext">{note_html}</span></div>'
         )
-    notes_block = (
-        f'<section class="notes"><h2>Notes</h2>{notes_rows}</section>'
-        if markers
-        else ""
-    )
+    notes_block = f'<section class="notes"><h2>Notes</h2>{notes_rows}</section>' if markers else ""
 
     stats_block = ""
     if lo is not None and hi is not None:
@@ -282,19 +296,19 @@ def build_report(
     if meta.get("note"):
         meta_bits.append(str(meta["note"]))
     if meta.get("sample_rate_hz"):
-        meta_bits.append(f'{meta["sample_rate_hz"]} Hz')
+        meta_bits.append(f"{meta['sample_rate_hz']} Hz")
     meta_bits.append(f"{sample_count:,} samples")
     meta_bits.append(f"{duration:.1f} s")
     meta_line = " · ".join(meta_bits)
 
     return (
-        "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n"
+        '<!DOCTYPE html>\n<html lang="en">\n<head>\n'
         '<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
         f"<title>{_esc(name)}</title>\n<style>{_css()}</style>\n</head>\n<body>\n"
         f'<header><h1>{_esc(name)}</h1><p class="meta">{_esc(meta_line)}</p></header>\n'
         f'<div class="chart">{svg}</div>\n{zoom_block}{notes_block}{stats_block}'
-        f'{power_block}{assertions_block}\n'
+        f"{power_block}{assertions_block}\n"
         "</body>\n</html>\n"
     )
 
@@ -376,11 +390,11 @@ def _render_svg(
     right_unit = str(series[right_idx[0]].get("unit", "") or "") if right_idx else ""
     parts.append(
         f'<text x="{plot_x}" y="{plot_y - 10}" text-anchor="start" class="axis">'
-        f'{_esc(left_unit)}</text>'
+        f"{_esc(left_unit)}</text>"
     )
     parts.append(
         f'<text x="{plot_x + plot_w}" y="{plot_y - 10}" text-anchor="end" class="axis">'
-        f'{_esc(right_unit)}</text>'
+        f"{_esc(right_unit)}</text>"
     )
 
     if lo is not None and hi is not None:
@@ -455,7 +469,7 @@ def _render_svg(
     legend_items = "".join(
         f'<span class="lg"><span class="swatch" '
         f'style="background:{_COLORS[i % len(_COLORS)]}"></span>'
-        f'{_esc(str(s.get("name", "")))} ({_esc(str(s.get("unit", "")))})</span>'
+        f"{_esc(str(s.get('name', '')))} ({_esc(str(s.get('unit', '')))})</span>"
         for i, s in enumerate(series)
     )
     return f'<div class="svg-wrap">{"".join(parts)}</div><div class="legend">{legend_items}</div>'
@@ -470,13 +484,8 @@ def _render_region(series: list[Series], lo: float, hi: float) -> str:
         color = _COLORS[i % len(_COLORS)]
         name = str(s.get("name", ""))
         unit = str(s.get("unit", "") or "")
-        cells = "".join(
-            f"<td>{_fmt(st[k])}</td>" for k in ("min", "mean", "max", "rms", "pp")
-        )
-        rows += (
-            f'<tr><td style="color:{color}">{_esc(name)}</td><td>{_esc(unit)}</td>'
-            f"{cells}</tr>"
-        )
+        cells = "".join(f"<td>{_fmt(st[k])}</td>" for k in ("min", "mean", "max", "rms", "pp"))
+        rows += f'<tr><td style="color:{color}">{_esc(name)}</td><td>{_esc(unit)}</td>{cells}</tr>'
 
     left_idx, right_idx = _series_axis(series)
     summary = ""
@@ -497,9 +506,9 @@ def _render_region(series: list[Series], lo: float, hi: float) -> str:
     header = "".join(f"<th>{c}</th>" for c in ["Channel", "Unit", *_STAT_COLS])
     return (
         f'<section class="region"><h2>Selected region '
-        f'{_fmt_time(lo)} → {_fmt_time(hi)} (Δ {_fmt_time(hi - lo)})</h2>'
+        f"{_fmt_time(lo)} → {_fmt_time(hi)} (Δ {_fmt_time(hi - lo)})</h2>"
         f'<p class="summary">{summary}</p>'
-        f'<table><thead><tr>{header}</tr></thead><tbody>{rows}</tbody></table></section>'
+        f"<table><thead><tr>{header}</tr></thead><tbody>{rows}</tbody></table></section>"
     )
 
 
@@ -514,11 +523,7 @@ def _index_of_name(series: list[Series], name: object) -> int:
 
 
 def _region_points(points: Points, lo: float, hi: float) -> Points:
-    return [
-        [t, v]
-        for t, v in points
-        if t is not None and v is not None and lo <= t <= hi
-    ]
+    return [[t, v] for t, v in points if t is not None and v is not None and lo <= t <= hi]
 
 
 def _mean(pts: Points) -> float | None:
@@ -613,8 +618,7 @@ def _dcdc_bits(
     pin = in_s["p"][0]
     pout = out_s["p"][0]
     bits = [
-        f"Vin {_fmt(in_s['v']['mean'])} V · Iin {_fmt(in_s['i']['mean'])} A "
-        f"· Pin {_fmt(pin)} W",
+        f"Vin {_fmt(in_s['v']['mean'])} V · Iin {_fmt(in_s['i']['mean'])} A · Pin {_fmt(pin)} W",
         f"Vout {_fmt(out_s['v']['mean'])} V · Iout {_fmt(out_s['i']['mean'])} A "
         f"· Pout {_fmt(pout)} W",
     ]
@@ -688,9 +692,7 @@ def _load_step_stats(
     return {"v0": v0, "v1": v1, "i0": i0, "i1": i1, "dv": dv, "di": di, "r": r}
 
 
-def _load_step_bits(
-    series: list[Series], rail: dict[str, Any], lo: float, hi: float
-) -> str | None:
+def _load_step_bits(series: list[Series], rail: dict[str, Any], lo: float, hi: float) -> str | None:
     v_idx = _index_of_name(series, rail.get("v"))
     i_idx = _index_of_name(series, rail.get("i"))
     if v_idx < 0 or i_idx < 0:
@@ -701,9 +703,7 @@ def _load_step_bits(
     bits = [f"ΔV {_fmt(s['dv'])} V · ΔI {_fmt(s['di'])} A"]
     if s["r"] is not None:
         bits.append(f"R {_fmt(s['r'])} Ω")
-    bits.append(
-        f"V {_fmt(s['v0'])}→{_fmt(s['v1'])} V · I {_fmt(s['i0'])}→{_fmt(s['i1'])} A"
-    )
+    bits.append(f"V {_fmt(s['v0'])}→{_fmt(s['v1'])} V · I {_fmt(s['i0'])}→{_fmt(s['i1'])} A")
     return "  ·  ".join(bits)
 
 
@@ -792,7 +792,7 @@ def _render_assertions(results: list[dict[str, Any]]) -> str:
         )
     return (
         f'<section class="assertions"><h2>Checks ({passed}/{len(results)} passed)</h2>'
-        f'{rows}</section>'
+        f"{rows}</section>"
     )
 
 

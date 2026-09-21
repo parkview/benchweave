@@ -77,9 +77,7 @@ def test_convert_channels_with_computed() -> None:
                     key: {"name": key, "unit": "V", "gain": 0.001, "offset": 0.0}
                     for key in CHANNEL_KEYS
                 },
-                "computed": [
-                    {"name": "Current", "unit": "A", "expr": "(A0 - A1) / 0.1"}
-                ],
+                "computed": [{"name": "Current", "unit": "A", "expr": "(A0 - A1) / 0.1"}],
             }
         },
     }
@@ -144,9 +142,7 @@ def _profile(
             channels[key] = {"name": key, "unit": "V", "show": False}
     return {
         "active_profile": "default",
-        "profiles": {
-            "default": {"channels": channels, "computed": computed or []}
-        },
+        "profiles": {"default": {"channels": channels, "computed": computed or []}},
     }
 
 

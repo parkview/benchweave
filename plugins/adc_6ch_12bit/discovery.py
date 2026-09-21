@@ -32,9 +32,7 @@ class AdcBoard:
     info: IdentifyInfo
 
 
-def adc_capture_filename(
-    serial: str | None, *, ext: str = "csv", tag: str | None = None
-) -> str:
+def adc_capture_filename(serial: str | None, *, ext: str = "csv", tag: str | None = None) -> str:
     """Build a descriptive capture filename: ``adc_<serial>[_<tag>]_<YYYYmmdd_HHMMSS>.<ext>``."""
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     middle = f"_{tag}" if tag else ""
@@ -70,9 +68,7 @@ def discover_adc_boards(
     every serial port instead.
     """
     candidates = [
-        port
-        for port in list_ports.comports()
-        if vendor_id is None or port.vid == vendor_id
+        port for port in list_ports.comports() if vendor_id is None or port.vid == vendor_id
     ]
 
     boards: list[AdcBoard] = []

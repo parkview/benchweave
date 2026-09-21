@@ -5,7 +5,7 @@ from benchweave import __version__
 
 def main() -> int:
     """Print the installed BenchWeave version."""
-    print(f"benchweave {__version__}")
+    print(f"benchweave-adc {__version__}")
     return 0
 
 
