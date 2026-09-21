@@ -53,7 +53,7 @@ to make the underlying control settable.
 | `auto_exposure` | menu | 1 Manual / 3 Aperture-Priority | 3 | gate for `exposure_time_absolute` |
 | `exposure_time_absolute` | int | 1…5000 | 300 | `inactive` in aperture-priority |
 | `focus_automatic_continuous` | bool | 0/1 | 1 | **continuous autofocus** (gate for focus) |
-| `focus_absolute` | int | 0…1023 | 192 | `inactive` while AF on |
+| `focus_absolute` | int | 0…1023 | 192 | `inactive` while AF on; 0 = ∞, 1023 = close-up |
 | `zoom_absolute` | int | 0…100 | 0 | digital zoom |
 
 ## Commands
@@ -134,6 +134,10 @@ convert photo.jpg -colorspace Gray -convolve '0,-1,0,-1,4,-1,0,-1,0' \
   -format "%[fx:standard_deviation*1000]" info:
 ```
 
+**Focus-axis direction (confirmed).** The 0…1023 axis runs **far → near**:
+`0` is **infinite focus** (distant subjects sharp), and `1023` (the top of the
+range) is **close-up**. To focus near, raise the value; to focus far, lower it.
+
 **Interpretation.** The focus control demonstrably works (≈8× sharpness spread
 across the range), but the curve is multi-peaked (≈20%, ≈40–50%, ≈90%) rather
 than a single peak. That is expected when the frame contains objects at several
@@ -141,9 +145,40 @@ depths — a whole-frame metric spikes wherever *any* region is in focus. The
 autofocus reference (15.5) lands near the mid-range (512), consistent with AF
 settling around mid focus for this scene.
 
-To map the **near↔far direction** of the 0…1023 axis, re-run the sweep against a
-single subject at a known distance with a plain background (e.g. the DUT at a
-fixed 300 mm), so exactly one peak appears and its position names the direction.
+## Focus stacking
+
+The Hugin toolchain is installed on the bench for focus stacking a swept set of
+stills into one all-in-focus image.
+
+**Install** (Ubuntu — `enfuse` and `enblend` are separate packages here, not
+`enblend-enfuse`):
+
+```bash
+sudo apt install hugin-tools enfuse   # align_image_stack + enfuse
+```
+
+**Run** — align first (the lens shift refocuses), then fuse (keep the sharpest
+pixel per region):
+
+```bash
+cd plugins/emeet/c960
+align_image_stack -a aligned_ captures/focus_*_1920x1080.jpg
+enfuse --exposure-weight=0 --saturation-weight=0 \
+       --contrast-weight=1 --hard-mask \
+       -o captures/focused.jpg aligned_*.tif
+rm aligned_*.tif                     # 26 MB of intermediates, discard
+```
+
+The `--hard-mask` contrast weighting picks whichever frame has the highest local
+contrast at each pixel — that is, the sharpest-region policy.
+
+**Verdict on this bench (2026-09-21): not worth it.** A 21-frame sweep
+(600…1000) fused to a result *worse* than the best single in-focus frame. The
+bench scene has poor lighting with specular reflections/glossy surfaces, and the
+whole-frame Laplacian metric (20.2 vs 15.6 best single) is inflated by those
+highlights — contrast fusion mistakes a bright reflection for a sharp edge and
+keeps it. Revisit only with diffuse, shadow-free lighting and a matte subject;
+until then prefer a single well-focused frame.
 
 ## Gotchas
 
