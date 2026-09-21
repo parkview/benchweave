@@ -8,7 +8,10 @@ import pytest
 
 from benchweave.web.library import CaptureLibrary
 
-STEM = "adc_1234_test_20260914_120000"
+# scan() ages a capture by the stamp in its stem against the real clock, so the
+# stamp is today's: a fixed date turns "captured today" false once it is a
+# retention period old (the original 20260914 did, on 21 September).
+STEM = f"adc_1234_test_{datetime.now():%Y%m%d_%H%M%S}"
 
 CSV = (
     "# profile: default\n"
