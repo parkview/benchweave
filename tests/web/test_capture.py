@@ -218,6 +218,7 @@ def test_worker_fault_releases_the_recorder(manager: BoardManager, tmp_path: Pat
     ``stop_stream()`` ever flushed the file: buffered rows were lost and the
     handle leaked until exit. The spy recorder's ``closed`` flag is the pin.
     """
+
     class _PathSpy(_SpyRecorder):
         def __init__(self, path: str, *args: object, **kwargs: object) -> None:
             super().__init__()
