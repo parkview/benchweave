@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, cast
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -423,12 +423,17 @@ def retention_suggestions() -> dict[str, object]:
 
 
 @app.get("/api/captures/{stem}/data")
-def capture_data(stem: str, max_points: int = MAX_DATA_POINTS) -> dict[str, object]:
+def capture_data(
+    stem: str,
+    # Bounded by the route (#8): 0, a negative value or an oversize value used
+    # to return the whole series, so the cap only held for cooperative clients.
+    max_points: int = Query(MAX_DATA_POINTS, ge=1, le=MAX_DATA_POINTS),
+) -> dict[str, object]:
     """Parse a capture's CSV and return its metadata and per-channel series.
 
     ``max_points`` decimates each channel to at most that many points
-    (default 5000; 0 returns every point). 404 when the stem has no CSV;
-    400 when the file cannot be parsed."""
+    (default 5000, allowed 1..5000; anything outside that range is 422).
+    404 when the stem has no CSV; 400 when the file cannot be parsed."""
     path = library.file_for(stem, "csv")
     if path is None:
         raise HTTPException(status_code=404, detail=f"no CSV for '{stem}'")
@@ -436,11 +441,10 @@ def capture_data(stem: str, max_points: int = MAX_DATA_POINTS) -> dict[str, obje
         data = library.parse_csv(path)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if max_points > 0:
-        data["series"] = [
-            {**s, "points": _decimate(cast(list[Any], s["points"]), max_points)}
-            for s in cast(list[dict[str, Any]], data["series"])
-        ]
+    data["series"] = [
+        {**s, "points": _decimate(cast(list[Any], s["points"]), max_points)}
+        for s in cast(list[dict[str, Any]], data["series"])
+    ]
     return data
 
 

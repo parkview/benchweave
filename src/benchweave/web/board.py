@@ -919,15 +919,16 @@ class BoardManager:
         return self.status()
 
     def _stop_stream_locked(self) -> None:
-        if not self._streaming:
-            return
-        self._stop_pump_locked()
-        if self._acquisition_id is not None:
-            with suppress(Exception):
-                self._invoke(_ACTION_ABORT, {"acquisition_id": self._acquisition_id})
-            self._acquisition_id = None
-        self._streaming = False
-        self._paused = False
+        if self._streaming:
+            self._stop_pump_locked()
+            if self._acquisition_id is not None:
+                with suppress(Exception):
+                    self._invoke(_ACTION_ABORT, {"acquisition_id": self._acquisition_id})
+                self._acquisition_id = None
+            self._streaming = False
+            self._paused = False
+        # Past this point the stream is stopped whoever stopped it; the
+        # recorder is flushed and closed exactly once either way (#7).
         self._recording = False
         if self._recorder is not None:
             with suppress(Exception):
@@ -1101,3 +1102,26 @@ def _validate_config(config: dict[str, Any]) -> None:
         isinstance(rate, bool) or not isinstance(rate, (int, float)) or rate <= 0
     ):
         raise ValueError("'settings.sample_rate_hz' must be a positive number or null")
+    # The remaining keys used to be persisted untyped; a string retention_days
+    # then raised TypeError in every capture listing (#6). Each key is checked
+    # against the type its readers assume, and null keeps its meaning.
+    for key, kind, floor in (
+        ("retention_days", int, 1),
+        ("graph_points", int, 1),
+        ("graph_width", int, 1),
+    ):
+        value = settings.get(key)
+        if value is not None and (
+            isinstance(value, bool) or not isinstance(value, kind) or value < floor
+        ):
+            raise ValueError(f"'settings.{key}' must be an integer >= {floor} or null")
+    scroll = settings.get("graph_scroll")
+    if scroll is not None and not isinstance(scroll, bool):
+        raise ValueError("'settings.graph_scroll' must be a boolean or null")
+    mask = settings.get("channel_mask")
+    if mask is not None and (
+        isinstance(mask, bool) or not isinstance(mask, int) or not 0 <= mask <= CHANNEL_MASK_ALL
+    ):
+        raise ValueError(
+            f"'settings.channel_mask' must be an integer 0..{CHANNEL_MASK_ALL} or null"
+        )
