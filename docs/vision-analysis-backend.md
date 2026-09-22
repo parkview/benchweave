@@ -90,6 +90,63 @@ Classic OCR, not a VLM. Good for printed silkscreen labels; bad at arbitrary
 scenes and handwriting. Use it for the narrow "read this label" query rather
 than reaching for a VLM.
 
+### 7. Blink detection (temporal brightness) → "is the LED blinking / how fast?"
+
+The one technique that needs *time* rather than a single frame. A photo misses
+a blink; a short burst of frames turns the box into a 1-D brightness signal
+whose periodicity is the blink rate.
+
+**Lock exposure first** — auto-exposure will fight the blink and smear the
+signal, so pin it:
+
+```bash
+v4l2-ctl -d /dev/video4 --set-ctrl=auto_exposure=1          # manual
+v4l2-ctl -d /dev/video4 --set-ctrl=exposure_time_absolute=100
+```
+
+**Capture ~2 s at native fps** (the C960 does 30 fps at 1080p → ~60 frames):
+
+```bash
+ffmpeg -y -f v4l2 -input_format mjpeg -video_size 1920x1080 -framerate 30 \
+  -i /dev/video4 -t 2 -q:v 3 captures/led_%03d.jpg
+```
+
+**Measure the box per frame, then classify** (flat → steady on/off; alternating
+→ blinking, rate from threshold crossings):
+
+```python
+import glob
+import numpy as np
+from PIL import Image
+
+x, y, w, h = (1200, 800, 60, 60)          # the LED box
+series = np.array([
+    np.asarray(Image.open(f).convert('L'), dtype=np.float32)[y:y+h, x:x+w].mean()
+    for f in sorted(glob.glob('captures/led_*.jpg'))
+])
+
+lo, hi = series.min(), series.max()
+if hi - lo < 8:                            # effectively flat
+    state = "on" if series.mean() > 128 else "off"
+else:
+    thr = (lo + hi) / 2
+    above = series > thr
+    switches = int(np.count_nonzero(above[1:] != above[:-1]))
+    print(f"blinking at ~{switches / 2 / 2.0:.1f} Hz")   # 2 s of video
+```
+
+For the exact rate, FFT the mean-subtracted series and take the dominant peak
+above ~0.5 Hz.
+
+**Nyquist limit.** Sampling at 30 fps resolves blinks up to ~15 Hz. Status LEDs
+(1–10 Hz) sit well inside; anything faster is aliased into a wrong number, and
+kHz PWM dimming reads as steadily-on-but-dim to camera and eye alike. For a
+>15 Hz signal, probe the LED pin with a nanoDLA/scope instead of the camera.
+
+**Where a VLM still fits.** Run this Tier 0 path for state/rate, then send one
+representative still to a Tier 1 model only for the semantic label ("green
+LED", "power LED").
+
 ### Tier 0 trade-offs
 
 | Pro | Con |
@@ -149,9 +206,9 @@ def analyze_crop(image_bytes: bytes, prompt: str) -> str: ...
 
 Route each query by kind:
 
-1. **Structured** — LED state, colour, cable presence, change detection →
-   **Tier 0 deterministic** (default). Free, testable, never wrong in the
-   "confident nonsense" sense.
+1. **Structured** — LED state/colour, blink rate, cable presence, change
+   detection → **Tier 0 deterministic** (default). Free, testable, never wrong
+   in the "confident nonsense" sense.
 2. **Open-ended** — identify a component, read text, "what's wrong here" →
    **Tier 1 small VLM**.
 3. **Tier 1 default model** — `moondream` for speed, `minicpm-v4.5` for
