@@ -122,6 +122,29 @@ def test_capture_file_csv(client: TestClient, captures_dir: Path) -> None:
     response = client.get(f"/api/captures/{STEM}/file")
     assert response.status_code == 200
     assert response.text == CSV
+    assert response.json()["detail"] == "no CSV for 'a b'"
+
+
+@pytest.mark.parametrize("max_points", [0, -1, 5001, "all"])
+def test_capture_data_rejects_out_of_range_max_points(
+    client: TestClient, captures_dir: Path, max_points: int | str
+) -> None:
+    """#8: the decimation budget is bounded by the route, so 0 cannot mean 'all'."""
+    _write_capture(captures_dir, text=_multirow_csv(12))
+    response = client.get(f"/api/captures/{STEM}/data", params={"max_points": max_points})
+    assert response.status_code == 422
+
+
+def test_capture_data_default_budget_caps_a_long_series(
+    client: TestClient, captures_dir: Path
+) -> None:
+    """#8: with no max_points the default budget applies; the series never exceeds it."""
+    from benchweave.web import app as web_app
+
+    _write_capture(captures_dir, text=_multirow_csv(web_app.MAX_DATA_POINTS + 7))
+    response = client.get(f"/api/captures/{STEM}/data")
+    assert response.status_code == 200
+    assert len(response.json()["series"][0]["points"]) <= web_app.MAX_DATA_POINTS
     assert "content-security-policy" not in response.headers
 
 
