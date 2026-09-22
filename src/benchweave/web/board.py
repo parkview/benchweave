@@ -664,3 +664,26 @@ def _validate_config(config: dict[str, Any]) -> None:
         isinstance(rate, bool) or not isinstance(rate, (int, float)) or rate <= 0
     ):
         raise ValueError("'settings.sample_rate_hz' must be a positive number or null")
+    # The remaining keys used to be persisted untyped; a string retention_days
+    # then raised TypeError in every capture listing (#6). Each key is checked
+    # against the type its readers assume, and null keeps its meaning.
+    for key, kind, floor in (
+        ("retention_days", int, 1),
+        ("graph_points", int, 1),
+        ("graph_width", int, 1),
+    ):
+        value = settings.get(key)
+        if value is not None and (
+            isinstance(value, bool) or not isinstance(value, kind) or value < floor
+        ):
+            raise ValueError(f"'settings.{key}' must be an integer >= {floor} or null")
+    scroll = settings.get("graph_scroll")
+    if scroll is not None and not isinstance(scroll, bool):
+        raise ValueError("'settings.graph_scroll' must be a boolean or null")
+    mask = settings.get("channel_mask")
+    if mask is not None and (
+        isinstance(mask, bool) or not isinstance(mask, int) or not 0 <= mask <= CHANNEL_MASK_ALL
+    ):
+        raise ValueError(
+            f"'settings.channel_mask' must be an integer 0..{CHANNEL_MASK_ALL} or null"
+        )

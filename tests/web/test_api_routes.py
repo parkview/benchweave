@@ -74,6 +74,19 @@ def test_get_config_returns_manager_config(
     assert response.json() == fake_manager.config
 
 
+def test_put_config_typed_settings_roundtrip(
+    client: TestClient, fake_manager: FakeBoardManager
+) -> None:
+    """#6: null keeps its meaning and well-typed settings are accepted."""
+    config = copy.deepcopy(DEFAULT_CONFIG)
+    config["settings"].update(
+        {"retention_days": None, "graph_width": None, "channel_mask": 3, "graph_points": 50}
+    )
+    response = client.put("/api/config", json=config)
+    assert response.status_code == 200, response.text
+    assert response.json()["settings"]["channel_mask"] == 3
+
+
 def test_put_config_valid_roundtrips(client: TestClient, fake_manager: FakeBoardManager) -> None:
     config = copy.deepcopy(DEFAULT_CONFIG)
     config["profiles"]["default"]["channels"]["A0"]["name"] = "Rail 3V3"
@@ -109,6 +122,34 @@ def _negative_sample_rate(config: dict[str, Any]) -> None:
     config["settings"]["sample_rate_hz"] = -5
 
 
+def _string_retention(config: dict[str, Any]) -> None:
+    config["settings"]["retention_days"] = "7"  # #6: TypeError in every listing
+
+
+def _zero_retention(config: dict[str, Any]) -> None:
+    config["settings"]["retention_days"] = 0
+
+
+def _boolean_retention(config: dict[str, Any]) -> None:
+    config["settings"]["retention_days"] = True
+
+
+def _string_channel_mask(config: dict[str, Any]) -> None:
+    config["settings"]["channel_mask"] = "3"
+
+
+def _oversize_channel_mask(config: dict[str, Any]) -> None:
+    config["settings"]["channel_mask"] = 64
+
+
+def _string_graph_points(config: dict[str, Any]) -> None:
+    config["settings"]["graph_points"] = "300"
+
+
+def _string_graph_scroll(config: dict[str, Any]) -> None:
+    config["settings"]["graph_scroll"] = "yes"
+
+
 @pytest.mark.parametrize(
     "mutate",
     [
@@ -118,6 +159,13 @@ def _negative_sample_rate(config: dict[str, Any]) -> None:
         _non_numeric_gain,
         _malformed_expression,
         _negative_sample_rate,
+        _string_retention,
+        _zero_retention,
+        _boolean_retention,
+        _string_channel_mask,
+        _oversize_channel_mask,
+        _string_graph_points,
+        _string_graph_scroll,
     ],
 )
 def test_put_config_invalid_is_422(
