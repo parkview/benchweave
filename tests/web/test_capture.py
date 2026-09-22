@@ -13,7 +13,7 @@ import pytest
 from benchweave.web.board import BoardManager
 from plugins.adc_6ch_12bit import CHANNEL_KEYS
 from plugins.adc_6ch_12bit.config import DEFAULT_CONFIG
-from tests.adc.fakeboard import SampleTuple, TransportFactory
+from tests.adc.fakeboard import SampleTuple, TransportFactory, wait_until
 
 
 @pytest.fixture
@@ -193,3 +193,63 @@ def test_sample_once_returns_converted_sample(
     assert result["averaged_n"] == 0
     assert channels
     assert all("name" in c and "value" in c for c in channels)
+
+
+def test_pump_fault_releases_the_recorder(
+    stack: tuple[BoardManager, TransportFactory], tmp_path: Path
+) -> None:
+    """A fault mid-recording closes the recorder and clears the state (#7).
+
+    The pump's except block must release the recorder itself: ``_streaming``
+    is already False there, so no later ``stop_stream()`` would flush the
+    file. The fault injected is a CSV write failure, one of the two faults
+    the block names; the spy's ``closed`` flag is the pin.
+    """
+
+    class _FailingRecorder(_SpyRecorder):
+        def __init__(self, path: str, *args: object, **kwargs: object) -> None:
+            super().__init__()
+            self.path = path  # start_stream reads it back into record_path
+
+        def write(self, counter: int, averaged_n: int, values: list[object]) -> None:
+            raise OSError("disk gone")
+
+    spies: list[_FailingRecorder] = []
+
+    def make_recorder(path: str, *args: object, **kwargs: object) -> _FailingRecorder:
+        spy = _FailingRecorder(path, *args, **kwargs)
+        spies.append(spy)
+        return spy
+
+    manager, factory = stack
+    factory.last.set_samples(_samples(50))
+    with (
+        mock.patch("benchweave.web.board.capture_dir", return_value=tmp_path),
+        mock.patch("benchweave.web.board._Recorder", side_effect=make_recorder),
+    ):
+        manager.start_stream(record=True)
+        wait_until(lambda: bool(spies) and spies[0].closed)
+
+    status = manager.status()
+    assert status["streaming"] is False
+    assert status["recording"] is False
+    assert str(status["last_error"]).startswith("stream stopped:")
+    # A later stop is a clean no-op, not a second close or a traceback.
+    manager.stop_stream()
+    assert manager.status()["recording"] is False
+
+
+def test_locked_stop_closes_the_recorder_when_the_stream_already_stopped(
+    stack: tuple[BoardManager, TransportFactory],
+) -> None:
+    """``_stop_stream_locked`` flushes and closes even with ``_streaming`` False (#7)."""
+    manager, _factory = stack
+    spy = _SpyRecorder()
+    manager._streaming = False
+    manager._recording = True
+    manager._recorder = spy  # type: ignore[assignment]
+    with manager._lock:
+        manager._stop_stream_locked()
+    assert spy.closed
+    assert manager._recorder is None
+    assert manager._recording is False

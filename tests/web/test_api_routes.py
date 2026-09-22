@@ -74,6 +74,19 @@ def test_get_config_returns_manager_config(
     assert response.json() == fake_manager.config
 
 
+def test_put_config_typed_settings_roundtrip(
+    client: TestClient, fake_manager: FakeBoardManager
+) -> None:
+    """#6: null keeps its meaning and well-typed settings are accepted."""
+    config = copy.deepcopy(DEFAULT_CONFIG)
+    config["settings"].update(
+        {"retention_days": None, "graph_width": None, "channel_mask": 3, "graph_points": 50}
+    )
+    response = client.put("/api/config", json=config)
+    assert response.status_code == 200, response.text
+    assert response.json()["settings"]["channel_mask"] == 3
+
+
 def test_put_config_valid_roundtrips(client: TestClient, fake_manager: FakeBoardManager) -> None:
     config = copy.deepcopy(DEFAULT_CONFIG)
     config["profiles"]["default"]["channels"]["A0"]["name"] = "Rail 3V3"
@@ -109,6 +122,34 @@ def _negative_sample_rate(config: dict[str, Any]) -> None:
     config["settings"]["sample_rate_hz"] = -5
 
 
+def _string_retention(config: dict[str, Any]) -> None:
+    config["settings"]["retention_days"] = "7"  # #6: TypeError in every listing
+
+
+def _zero_retention(config: dict[str, Any]) -> None:
+    config["settings"]["retention_days"] = 0
+
+
+def _boolean_retention(config: dict[str, Any]) -> None:
+    config["settings"]["retention_days"] = True
+
+
+def _string_channel_mask(config: dict[str, Any]) -> None:
+    config["settings"]["channel_mask"] = "3"
+
+
+def _oversize_channel_mask(config: dict[str, Any]) -> None:
+    config["settings"]["channel_mask"] = 64
+
+
+def _string_graph_points(config: dict[str, Any]) -> None:
+    config["settings"]["graph_points"] = "300"
+
+
+def _string_graph_scroll(config: dict[str, Any]) -> None:
+    config["settings"]["graph_scroll"] = "yes"
+
+
 @pytest.mark.parametrize(
     "mutate",
     [
@@ -118,6 +159,13 @@ def _negative_sample_rate(config: dict[str, Any]) -> None:
         _non_numeric_gain,
         _malformed_expression,
         _negative_sample_rate,
+        _string_retention,
+        _zero_retention,
+        _boolean_retention,
+        _string_channel_mask,
+        _oversize_channel_mask,
+        _string_graph_points,
+        _string_graph_scroll,
     ],
 )
 def test_put_config_invalid_is_422(
@@ -343,6 +391,35 @@ def test_stream_sse_frames_and_cleanup(
         {"key": "A0", "name": "Voltage", "unit": "V", "value": round(100 * 0.001221, 6)}
     ]
     # The client disconnect ended the endless stream and cleaned up the queue.
+    assert fake_manager.unsubscribed == [fake_manager.queue]
+
+
+@pytest.mark.timeout(30)
+def test_stream_own_disconnect_check_ends_the_stream(
+    client: TestClient, fake_manager: FakeBoardManager
+) -> None:
+    """The route's own ``is_disconnected`` check ends the generator (#10).
+
+    ``_drive_sse`` cannot pin that branch: starlette's ``StreamingResponse``
+    listens for the disconnect itself and cancels the stream, so the SSE
+    tests above pass with the check deleted. Here the endpoint is called
+    directly with a request that reports itself disconnected; the body
+    iterator must end before it ever waits on the queue, and the queue
+    must still be released.
+    """
+    from benchweave.web import app as web_app
+
+    class _Gone:
+        async def is_disconnected(self) -> bool:
+            return True
+
+    async def drain() -> list[object]:
+        response = await web_app.stream(_Gone())  # type: ignore[arg-type]
+        return [chunk async for chunk in response.body_iterator]
+
+    # With the check deleted the generator blocks on the queue instead.
+    chunks = asyncio.run(asyncio.wait_for(drain(), timeout=5.0))
+    assert chunks == []
     assert fake_manager.unsubscribed == [fake_manager.queue]
 
 
