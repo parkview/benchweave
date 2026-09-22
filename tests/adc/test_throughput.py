@@ -3,8 +3,10 @@
 At 2 Mbps the board can push hundreds of SAMPLE frames between host pulls.
 This test feeds one read's worth of concatenated frames through the REAL
 SerialLink + adapter stack and asserts every sample surfaces in order from
-``next_event`` — and that draining them costs a handful of host transfers,
-not one per sample.
+``next_event``. OTDP section 8.1 exact-byte reads cost two transfers per
+frame (its header, then the rest), so the cost that matters is waiting on
+the reader thread: a burst already in the ring is taken on the host loop,
+and draining it waits a handful of times, not once per sample.
 """
 
 from __future__ import annotations
@@ -22,8 +24,21 @@ from tests.adc.fakeboard import FakeBoardTransport
 DESCRIPTOR_PATH = Path(__file__).resolve().parents[2] / "plugins/adc_6ch_12bit/descriptor.json"
 DESCRIPTOR: dict[str, Any] = json.loads(DESCRIPTOR_PATH.read_text(encoding="utf-8"))
 
-#: ~150 SAMPLE frames (23 bytes each) fit inside one 4096-byte receive.
+#: A burst of SAMPLE frames (23 bytes each) landing between host pulls.
 FRAMES = 150
+
+
+class _CountingLink(SerialLink):
+    """Counts the receives that had to wait on the reader thread."""
+
+    def __init__(self, transport: FakeBoardTransport) -> None:
+        super().__init__(transport)
+        self.waits = 0
+
+    def take(self, exact: int, terminator: bytes, max_bytes: int, timeout: float) -> bytes | None:
+        if timeout > 0:
+            self.waits += 1
+        return super().take(exact, terminator, max_bytes, timeout)
 
 
 class _CountingServices(SerialHostServices):
@@ -61,10 +76,10 @@ def test_bulk_sample_chunk_arrives_in_order_without_io_amplification(
     samples = [(i, (i & 0xFFF, 1, 2, 3, 4, 5)) for i in range(FRAMES)]
     # The whole burst lands in the fake's outgoing buffer on ONE read call.
     transport = FakeBoardTransport(samples, frames_per_read=FRAMES)
-    link = SerialLink(transport)
+    link = _CountingLink(transport)
     services = _CountingServices(link, artifact_dir=tmp_path)
 
-    async def scenario() -> tuple[list[int], int]:
+    async def scenario() -> tuple[list[int], int, int]:
         adapter = create_plugin()
         await adapter.open(DESCRIPTOR, services, _context("open"))
         await _invoke(
@@ -99,6 +114,7 @@ def test_bulk_sample_chunk_arrives_in_order_without_io_amplification(
         )
 
         transfers_before = services.transfers
+        waits_before = link.waits
         counters: list[int] = []
         deadline = time.monotonic() + 10.0
         while len(counters) < FRAMES and time.monotonic() < deadline:
@@ -107,17 +123,21 @@ def test_bulk_sample_chunk_arrives_in_order_without_io_amplification(
                 continue
             counters.append(int(event["x-adc-sample"]["counter"]))
         transfers_during = services.transfers - transfers_before
+        waits_during = link.waits - waits_before
 
         await _invoke(adapter, "op-abort", "otdp.daq.abort/1.0.0", {"acquisition_id": "acq-bulk"})
         await adapter.close(_context("close"))
-        return counters, transfers_during
+        return counters, transfers_during, waits_during
 
     try:
-        counters, transfers_during = asyncio.run(scenario())
+        counters, transfers_during, waits_during = asyncio.run(scenario())
     finally:
         link.close()
 
     assert counters == list(range(FRAMES))  # every sample, in firmware order
-    # Draining 150 buffered samples must cost a few bounded receives, never
-    # one transfer per sample.
-    assert transfers_during <= FRAMES // 10
+    # Draining 150 buffered samples waits on the reader thread a few times,
+    # never once per sample...
+    assert waits_during <= FRAMES // 10
+    # ...and costs two exact reads per frame; anything more is a quiet read,
+    # which only happens after a wait.
+    assert 2 * FRAMES <= transfers_during <= 2 * FRAMES + waits_during

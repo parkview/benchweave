@@ -1,4 +1,4 @@
-"""Host-side SDK services: SerialLink ring, transfer kinds, capture artifacts."""
+"""Host-side SDK services: SerialLink ring, section 8.1 transfers, capture artifacts."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 
 from benchweave.web.host import (
+    RECEIVE_WAIT_S,
     RING_CAPACITY,
     TRANSFER_CEILING,
     AdcOperationContext,
@@ -85,11 +86,13 @@ def _drain(serial_link: SerialLink, *, deadline_s: float = 2.0) -> bytes:
     collected = bytearray()
     deadline = time.monotonic() + deadline_s
     while time.monotonic() < deadline:
-        chunk = serial_link.read_available(TRANSFER_CEILING, 0.05)
-        if chunk:
-            collected += chunk
+        held = serial_link.buffered
+        if held:
+            collected += serial_link.take(held, b"\n", held, 0.0) or b""
         elif collected:
             break
+        else:
+            time.sleep(0.01)
     return bytes(collected)
 
 
@@ -110,10 +113,40 @@ def test_link_round_trips_bytes(transport: ScriptedTransport, link: SerialLink) 
     assert transport.written == [b"cmd"]
 
 
-def test_link_read_timeout_returns_empty(link: SerialLink) -> None:
+def test_link_take_times_out_as_incomplete(link: SerialLink) -> None:
     start = time.monotonic()
-    assert link.read_available(64, 0.05) == b""
+    assert link.take(4, b"\n", 64, 0.05) is None
     assert time.monotonic() - start >= 0.04
+
+
+def test_link_take_leaves_an_incomplete_receive_in_the_ring(
+    transport: ScriptedTransport, link: SerialLink
+) -> None:
+    transport.feed(b"abc")
+    _wait_consumed(transport)
+    assert link.take(5, b"\n", 5, 0.05) is None
+    assert link.buffered == 3
+    transport.feed(b"de")
+    assert link.take(5, b"\n", 5, 1.0) == b"abcde"
+
+
+def test_link_take_through_a_terminator(transport: ScriptedTransport, link: SerialLink) -> None:
+    transport.feed(b"one\r\ntwo")
+    _wait_consumed(transport)
+    assert link.take(0, b"\r\n", 64, 1.0) == b"one\r\n"
+    assert link.take(0, b"\r\n", 64, 0.05) is None  # "two" has no terminator yet
+    assert link.buffered == 3
+
+
+def test_link_take_discards_an_over_long_line(
+    transport: ScriptedTransport, link: SerialLink
+) -> None:
+    transport.feed(b"x" * 10 + b"\nok\n")
+    _wait_consumed(transport)
+    with pytest.raises(ValueError, match="no terminator within 8 bytes"):
+        link.take(0, b"\n", 8, 1.0)
+    assert link.take(0, b"\n", 8, 1.0) == b"xx\n"  # resynchronised on the next terminator
+    assert link.take(0, b"\n", 8, 1.0) == b"ok\n"
 
 
 def test_link_write_fault_flips_faulted(transport: ScriptedTransport, link: SerialLink) -> None:
@@ -122,14 +155,14 @@ def test_link_write_fault_flips_faulted(transport: ScriptedTransport, link: Seri
         link.write(b"x")
     assert link.faulted
     with pytest.raises(ConnectionError):
-        link.read_available(1, 0.1)
+        link.take(1, b"\n", 1, 0.1)
 
 
 def test_link_read_fault_wakes_waiters(transport: ScriptedTransport, link: SerialLink) -> None:
     transport.fail_reads = True
     with pytest.raises(ConnectionError):
         # The reader thread faults; the bounded wait must not run its course.
-        link.read_available(1, 5.0)
+        link.take(1, b"\n", 1, 5.0)
     assert link.faulted
     with pytest.raises(ConnectionError):
         link.write(b"x")
@@ -150,7 +183,7 @@ def test_link_close_raises_for_late_users(transport: ScriptedTransport, link: Se
     with pytest.raises(ConnectionError):
         link.write(b"x")
     with pytest.raises(ConnectionError):
-        link.read_available(1, 0.1)
+        link.take(1, b"\n", 1, 0.1)
 
 
 # -- AdcOperationContext -------------------------------------------------------
@@ -179,70 +212,133 @@ def _services(
     return SerialHostServices(link, artifact_dir=artifact_dir, evidence_path=evidence_path)
 
 
-def test_transfer_exchange_writes_then_reads(
+def _receive(
+    max_bytes: int, *, exact: int | None = None, termination: str = "lf"
+) -> dict[str, Any]:
+    return {
+        "kind": "stream_receive",
+        "max_bytes": max_bytes,
+        "termination": termination,
+        "exact_bytes": exact,
+    }
+
+
+def test_transfer_send_writes_and_answers_empty(
+    transport: ScriptedTransport, link: SerialLink, tmp_path: Path
+) -> None:
+    services = _services(link, tmp_path)
+    result = asyncio.run(services.transfer({"kind": "stream_send", "data": b"cmd"}, _context()))
+    assert result == {}
+    assert transport.written == [b"cmd"]
+
+
+def test_transfer_exchange_writes_then_takes_exact_bytes(
     transport: ScriptedTransport, link: SerialLink, tmp_path: Path
 ) -> None:
     services = _services(link, tmp_path)
     transport.feed(b"device-reply")
     _wait_consumed(transport)
 
-    result = asyncio.run(
-        services.transfer({"kind": "stream_exchange", "data": b"cmd", "max_bytes": 64}, _context())
-    )
-    assert result["data"] == b"device-reply"
+    async def scenario() -> tuple[dict[str, Any], dict[str, Any]]:
+        exchange = await services.transfer(
+            {**_receive(64, exact=6), "kind": "stream_exchange", "data": b"cmd"},
+            _context(),
+        )
+        rest = await services.transfer(_receive(64, exact=6), _context())
+        return exchange, rest
+
+    exchange, rest = asyncio.run(scenario())
+    assert exchange == {"data": b"device"}  # exact_bytes wins over the lf terminator
+    assert rest == {"data": b"-reply"}
     assert transport.written == [b"cmd"]
 
 
-def test_transfer_receive_reads_without_writing(
+def test_transfer_receive_takes_a_terminated_line_without_writing(
     transport: ScriptedTransport, link: SerialLink, tmp_path: Path
 ) -> None:
     services = _services(link, tmp_path)
-    transport.feed(b"unsolicited")
+    transport.feed(b"line one\nrest")
     _wait_consumed(transport)
 
-    result = asyncio.run(services.transfer({"kind": "stream_receive", "max_bytes": 64}, _context()))
-    assert result["data"] == b"unsolicited"
+    result = asyncio.run(services.transfer(_receive(64), _context()))
+    assert result == {"data": b"line one\n"}
     assert transport.written == []
 
 
-def test_transfer_enforces_max_bytes_ceiling(
+@pytest.mark.parametrize("exact", [None, 5])
+def test_transfer_on_a_quiet_line_answers_empty_before_the_deadline(
+    link: SerialLink, tmp_path: Path, exact: int | None
+) -> None:
+    services = _services(link, tmp_path)
+    started = time.monotonic()
+    result = asyncio.run(services.transfer(_receive(64, exact=exact), _context(5.0)))
+    assert result == {"data": b""}
+    assert time.monotonic() - started < RECEIVE_WAIT_S + 1.0  # not the 5 s deadline
+
+
+def test_transfer_keeps_an_incomplete_frame_across_the_deadline(
     transport: ScriptedTransport, link: SerialLink, tmp_path: Path
 ) -> None:
     services = _services(link, tmp_path)
-    transport.feed(b"z" * (TRANSFER_CEILING + 100))
+    transport.feed(b"abc")
     _wait_consumed(transport)
-
-    async def scenario() -> tuple[bytes, bytes]:
-        first = await services.transfer(
-            {"kind": "stream_receive", "max_bytes": 1_000_000}, _context()
-        )
-        second = await services.transfer(
-            {"kind": "stream_receive", "max_bytes": 1_000_000}, _context()
-        )
-        return bytes(first["data"]), bytes(second["data"])
-
-    first, second = asyncio.run(scenario())
-    assert len(first) == TRANSFER_CEILING  # declared budget clamped to the ceiling
-    assert second == b"z" * 100  # the excess stays in the ring for the next pull
+    with pytest.raises(TimeoutError):
+        asyncio.run(services.transfer(_receive(5, exact=5), _context(0.3)))
+    transport.feed(b"de")
+    result = asyncio.run(services.transfer(_receive(5, exact=5), _context()))
+    assert result == {"data": b"abcde"}  # never returned early, never lost
 
 
-def test_transfer_rejects_bad_transactions(link: SerialLink, tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "transaction",
+    [
+        {"kind": "dma", "max_bytes": 16},
+        {"kind": "stream_send", "data": b"x", "max_bytes": 16},  # extra field
+        {"kind": "stream_receive", "max_bytes": 16, "termination": "lf"},  # missing field
+        {**_receive(16), "kind": "stream_exchange"},  # no data
+        {"kind": "stream_send", "data": "text"},
+        _receive(16, termination="eom"),  # a serial line has no message boundary
+        _receive(0),
+        _receive(TRANSFER_CEILING + 1),
+        _receive(True),
+        _receive(16, exact=17),
+        _receive(16, exact=-1),
+    ],
+    ids=[
+        "unknown-kind",
+        "extra-field",
+        "missing-field",
+        "exchange-without-data",
+        "text-data",
+        "eom",
+        "zero-max",
+        "over-ceiling",
+        "bool-max",
+        "exact-over-max",
+        "negative-exact",
+    ],
+)
+def test_transfer_refuses_what_section_8_1_does_not_allow(
+    transport: ScriptedTransport, link: SerialLink, tmp_path: Path, transaction: dict[str, Any]
+) -> None:
     services = _services(link, tmp_path)
-    with pytest.raises(ValueError, match="unsupported transaction kind"):
-        asyncio.run(services.transfer({"kind": "dma", "max_bytes": 16}, _context()))
-    with pytest.raises(ValueError, match="max_bytes must be positive"):
-        asyncio.run(services.transfer({"kind": "stream_receive", "max_bytes": 0}, _context()))
+    with pytest.raises(ValueError):
+        asyncio.run(services.transfer(transaction, _context()))
+    assert transport.written == []
 
 
-def test_transfer_refuses_cancelled_or_expired_context(link: SerialLink, tmp_path: Path) -> None:
+def test_transfer_refuses_cancelled_or_expired_context(
+    transport: ScriptedTransport, link: SerialLink, tmp_path: Path
+) -> None:
     services = _services(link, tmp_path)
     cancelled = _context()
     cancelled.cancel()
     with pytest.raises(TimeoutError):
-        asyncio.run(services.transfer({"kind": "stream_receive", "max_bytes": 16}, cancelled))
+        asyncio.run(services.transfer({"kind": "stream_send", "data": b"x"}, cancelled))
     expired = AdcOperationContext("op-late", time.monotonic() - 1.0)
     with pytest.raises(TimeoutError):
-        asyncio.run(services.transfer({"kind": "stream_receive", "max_bytes": 16}, expired))
+        asyncio.run(services.transfer(_receive(16, exact=4), expired))
+    assert transport.written == []
 
 
 def test_close_transport_closes_the_link(

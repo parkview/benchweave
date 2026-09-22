@@ -111,6 +111,17 @@ class FrameParser:
             frames.append(frame)
         return frames
 
+    def bytes_wanted(self) -> int:
+        """Bytes that complete the buffered header, or else the buffered frame.
+
+        Reading exactly this many never runs past the end of an aligned frame,
+        so an exact-byte transport can deliver the wire one frame at a time.
+        """
+        buf = self._buffer
+        if len(buf) < HEADER_LEN:
+            return HEADER_LEN - len(buf)
+        return HEADER_LEN + buf[4] + CRC_LEN - len(buf)
+
     def _extract(self) -> Frame | None:
         while True:
             buf = self._buffer

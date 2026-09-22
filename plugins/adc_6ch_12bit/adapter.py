@@ -22,11 +22,15 @@ from typing import Any, Protocol
 
 from . import protocol
 
-#: Transaction vocabulary this adapter emits (the host enforces the bounds).
-EXCHANGE = "stream_exchange"
+#: Transaction vocabulary this adapter emits, in OTDP section 8.1's grammar:
+#: a command goes out as ``stream_send`` and every read is an exact-byte
+#: ``stream_receive`` (a frame's header, then the rest of that frame), so the
+#: binary protocol never depends on a line terminator. An empty receive means
+#: the line is quiet.
+SEND = "stream_send"
 RECEIVE = "stream_receive"
-#: One pull's byte bound: many SAMPLE frames, still far under a UART second.
-RECEIVE_MAX_BYTES = 4096
+#: Frames one fetch drains at most, so a live stream cannot hold it forever.
+FETCH_DRAIN_FRAMES = 128
 #: Descriptor channel ids in firmware SAMPLE order (CHANNEL_KEYS lowercased).
 CHANNEL_IDS = ("a0", "a1", "a2", "a3", "a4", "a7")
 
@@ -99,8 +103,8 @@ class AdcAdapter:
 
     A fresh instance serves one session: ``open`` binds the descriptor and
     host services (no I/O), ``execute`` runs one operation, ``next_event``
-    drains buffered samples for a known acquisition (one bounded receive
-    when the buffer runs dry), and ``close`` tolerates repeated calls.
+    drains buffered samples for a known acquisition (reading one frame when
+    the buffer runs dry), and ``close`` tolerates repeated calls.
     """
 
     def __init__(self) -> None:
@@ -165,7 +169,8 @@ class AdcAdapter:
 
         Unknown subscriptions answer ``None`` with no transport activity, so
         a quiet lifecycle stays quiet. When the buffer runs dry for a live
-        acquisition, exactly one bounded receive refills it.
+        acquisition, one frame is read from the wire; a quiet line answers
+        ``None`` rather than raising.
         """
         acquisition = self._acquisitions.get(subscription_id)
         if acquisition is None or acquisition.state not in ("running", "armed"):
@@ -409,7 +414,11 @@ class AdcAdapter:
             )
         configuration = self._configurations[acquisition.configuration_id]
         if acquisition.state == "running":
-            await self._pump(context)
+            # Take in what the board has sent so far: frames until the line
+            # is quiet, bounded so a live stream cannot hold the fetch.
+            for _ in range(FETCH_DRAIN_FRAMES):
+                if not await self._pump(context):
+                    break
 
         channel_ids = self._active_channel_ids(configuration.channel_mask)
         samples = list(acquisition.samples)
@@ -536,24 +545,19 @@ class AdcAdapter:
         frame = protocol.Frame(type=int(command), seq=self._next_seq(), payload=payload)
         await context.mark_dispatch_started()
         try:
-            response = await services.transfer(
-                {
-                    "kind": EXCHANGE,
-                    "data": protocol.encode_frame(frame),
-                    "max_bytes": protocol.MAX_FRAME,
-                },
-                context,
+            sent = await services.transfer(
+                {"kind": SEND, "data": protocol.encode_frame(frame)}, context
             )
-            reply = self._route_frames(bytes(response.get("data", b"")), command)
-            while reply is None:
-                # The reply can arrive interleaved behind SAMPLE frames;
-                # bounded receives continue until it surfaces or time runs out.
+            if sent != {}:
+                raise ConnectionError(f"host answered a send with {sorted(sent)}")
+            while True:
+                # The reply can arrive interleaved behind SAMPLE frames; frames
+                # are read until it surfaces or time runs out.
+                reply = self._route_frames(await self._read_frames(context), command)
+                if reply is not None:
+                    return reply
                 if services.monotonic() >= context.deadline_monotonic:
                     raise TimeoutError(f"no response to {command.name}")
-                more = await services.transfer(
-                    {"kind": RECEIVE, "max_bytes": RECEIVE_MAX_BYTES}, context
-                )
-                reply = self._route_frames(bytes(more.get("data", b"")), command)
         except (TimeoutError, ConnectionError) as exc:
             # After dispatch the outcome is uncertain — never claim "error".
             raise _OperationError(
@@ -562,12 +566,39 @@ class AdcAdapter:
                 f"{command.name}: {exc}",
                 "unknown",
             ) from exc
-        return reply
 
-    def _route_frames(self, data: bytes, pending: protocol.FrameType) -> protocol.Frame | None:
-        """Feed received bytes to the parser; buffer samples, match the reply."""
+    async def _receive_exact(self, size: int, context: Any) -> bytes:
+        """One exact-byte receive: ``size`` bytes, or ``b""`` on a quiet line."""
+        response = await self._require_services().transfer(
+            {"kind": RECEIVE, "max_bytes": size, "termination": "lf", "exact_bytes": size},
+            context,
+        )
+        data = response.get("data")
+        if not isinstance(data, bytes) or len(data) not in (0, size):
+            # A host that breaks the exact-bytes contract has lost the framing.
+            raise ConnectionError(f"host answered an exact {size}-byte receive with {data!r:.40}")
+        return data
+
+    async def _read_frames(self, context: Any) -> list[protocol.Frame]:
+        """Exact receives until the parser completes a frame; ``[]`` when quiet.
+
+        A frame the line leaves unfinished stays in the parser, and the next
+        read asks only for the bytes that complete it.
+        """
+        while True:
+            data = await self._receive_exact(self._parser.bytes_wanted(), context)
+            if not data:
+                return []
+            frames = self._parser.feed(data)
+            if frames:
+                return frames
+
+    def _route_frames(
+        self, frames: list[protocol.Frame], pending: protocol.FrameType
+    ) -> protocol.Frame | None:
+        """Buffer samples and pick out the reply to the pending command."""
         reply: protocol.Frame | None = None
-        for frame in self._parser.feed(data):
+        for frame in frames:
             if frame.type == protocol.FrameType.SAMPLE:
                 self._buffer_sample(frame)
             elif reply is None and self._matches(frame, pending):
@@ -599,17 +630,24 @@ class AdcAdapter:
             # Malformed sample frame: skip it rather than faulting the link.
             return
 
-    async def _pump(self, context: Any) -> None:
-        """One bounded receive; sample frames land in the active acquisition."""
+    async def _pump(self, context: Any) -> bool:
+        """Read one frame; a sample lands in the active acquisition.
+
+        Returns ``False`` when nothing arrived: the line is quiet, or the
+        deadline or a cancellation cut the read short (a partial frame stays
+        buffered for the next read).
+        """
         services = self._require_services()
         if context.is_cancelled() or services.monotonic() >= context.deadline_monotonic:
-            return
-        response = await services.transfer(
-            {"kind": RECEIVE, "max_bytes": RECEIVE_MAX_BYTES}, context
-        )
-        for frame in self._parser.feed(bytes(response.get("data", b""))):
+            return False
+        try:
+            frames = await self._read_frames(context)
+        except TimeoutError:
+            return False
+        for frame in frames:
             if frame.type == protocol.FrameType.SAMPLE:
                 self._buffer_sample(frame)
+        return bool(frames)
 
     def _expect_ack(self, response: protocol.Frame, command: str) -> None:
         if response.type == protocol.FrameType.NAK:
@@ -654,4 +692,4 @@ def _nearest_averaging(requested_rate: float, n_channels: int) -> tuple[int, flo
     return best, round(best_rate, 3)
 
 
-__all__ = ["AdcAdapter", "create_plugin", "CHANNEL_IDS", "EXCHANGE", "RECEIVE"]
+__all__ = ["AdcAdapter", "create_plugin", "CHANNEL_IDS", "SEND", "RECEIVE"]
