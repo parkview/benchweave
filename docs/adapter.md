@@ -58,6 +58,26 @@ Two mappings deserve a note:
   that reports `status: "unknown"` with `dispatch_state: "unknown"` rather
   than claiming a clean error.
 
+## Transfers
+
+`services.transfer` carries the OTDP §8.1 stream transactions, and both
+halves keep to that grammar:
+
+- The adapter sends each command frame with `stream_send` (answered `{}`)
+  and reads with exact-byte `stream_receive` calls: first a frame's 5-byte
+  header, then the rest of that frame, sized from the header's length byte.
+  The binary protocol never depends on a line terminator, and a read never
+  asks for bytes beyond the frame the board is sending.
+- An empty receive means the line is quiet: `next_event` answers `None`,
+  a reply that has not arrived yet is read again until the deadline, and a
+  frame the line pauses inside stays buffered until it completes.
+- The host refuses any transaction that misses a field of its kind or
+  carries another, refuses `eom` termination (a serial line has no message
+  boundary), and only ever answers a receive complete. When the ring
+  already holds the bytes a receive asks for, it is served without waiting
+  on the reader thread, so a burst of `SAMPLE` frames costs two reads per
+  frame but no per-frame thread hop.
+
 ## The `x-adc-sample` event extension
 
 `next_event` returns telemetry events whose standard `reading` block carries

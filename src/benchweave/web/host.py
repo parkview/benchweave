@@ -10,7 +10,8 @@ never imported at runtime).
 
 Threading model: a dedicated reader thread drains the serial port into a
 bounded ring buffer the moment bytes arrive (2 Mbps never backs up into the
-OS buffer), and ``transfer`` waits on that ring via the event loop's
+OS buffer). ``transfer`` takes from that ring directly when it already holds
+what a receive asks for, and otherwise waits on it via the event loop's
 executor, so the host loop stays free while the wire is quiet.
 """
 
@@ -30,10 +31,22 @@ from typing import Any, Protocol
 #: Ring capacity: ~4 s of full-rate SAMPLE traffic; the reader drops the
 #: oldest bytes beyond it (a stalled consumer must not grow memory forever).
 RING_CAPACITY = 256 * 1024
-#: Ceiling on any single transfer's max_bytes declaration.
+#: Ceiling on any single receive's max_bytes declaration.
 TRANSFER_CEILING = 64 * 1024
-#: How long one quiet receive waits for bytes before returning empty.
+#: How long a receive waits for its first byte before answering that the
+#: line is quiet (``b""``).
 RECEIVE_WAIT_S = 0.1
+
+#: OTDP section 8.1 stream transactions: every field of a kind is required
+#: and no other is accepted. A serial line has no message boundary, so
+#: ``eom`` termination is refused.
+_TERMINATORS = {"lf": b"\n", "crlf": b"\r\n"}
+_RECEIVE_FIELDS = frozenset({"max_bytes", "termination", "exact_bytes"})
+_FIELDS = {
+    "stream_send": frozenset({"kind", "data"}),
+    "stream_receive": frozenset({"kind"}) | _RECEIVE_FIELDS,
+    "stream_exchange": frozenset({"kind", "data"}) | _RECEIVE_FIELDS,
+}
 
 
 class Transport(Protocol):
@@ -97,20 +110,45 @@ class SerialLink:
             self._fault()
             raise ConnectionError(f"serial write failed: {exc}") from exc
 
-    def read_available(self, max_bytes: int, timeout: float) -> bytes:
-        """Up to ``max_bytes`` from the ring, waiting at most ``timeout``."""
+    @property
+    def buffered(self) -> int:
+        """Bytes read from the port and not yet taken."""
+        with self._condition:
+            return len(self._ring)
+
+    def take(self, exact: int, terminator: bytes, max_bytes: int, timeout: float) -> bytes | None:
+        """One receive from the ring, waiting at most ``timeout`` for it to complete.
+
+        A positive ``exact`` takes exactly that many bytes; otherwise the
+        bytes up to and including ``terminator``, which must appear within
+        ``max_bytes``. Returns ``None`` while the receive is incomplete, and
+        the bytes stay in the ring for the next call.
+        """
         deadline = time.monotonic() + max(timeout, 0.0)
         with self._condition:
-            while not self._ring:
+            while True:
+                ring = self._ring
+                if exact:
+                    if len(ring) >= exact:
+                        return self._pop(exact)
+                else:
+                    end = ring.find(terminator, 0, max_bytes)
+                    if end >= 0:
+                        return self._pop(end + len(terminator))
+                    if len(ring) >= max_bytes:
+                        del ring[:max_bytes]  # discard, so the next call can resynchronise
+                        raise ValueError(f"no terminator within {max_bytes} bytes")
                 if self._faulted or not self._running:
                     raise ConnectionError("serial link is closed or faulted")
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    return b""
+                    return None
                 self._condition.wait(remaining)
-            taken = bytes(self._ring[:max_bytes])
-            del self._ring[: len(taken)]
-            return taken
+
+    def _pop(self, count: int) -> bytes:
+        taken = bytes(self._ring[:count])
+        del self._ring[:count]
+        return taken
 
     def close(self) -> None:
         """Stop the reader thread and close the transport (best effort)."""
@@ -181,10 +219,15 @@ class AdcOperationContext:
 class SerialHostServices:
     """HostServices + CaptureServices over one :class:`SerialLink`.
 
-    ``transfer`` understands two transaction kinds, matching the adapter's
-    vocabulary: ``stream_exchange`` (write ``data``, then one bounded read)
-    and ``stream_receive`` (one bounded read only). Declared ``max_bytes``
-    are enforced against :data:`TRANSFER_CEILING`.
+    ``transfer`` speaks OTDP section 8.1's stream grammar: ``stream_send``
+    writes ``data`` and answers ``{}``; ``stream_receive`` reads; and
+    ``stream_exchange`` does both. A receive takes exactly ``exact_bytes``
+    when that is positive, and otherwise the bytes through an ``lf`` or
+    ``crlf`` terminator found within ``max_bytes`` (at most
+    :data:`TRANSFER_CEILING`). A receive that sees no bytes at all for
+    :data:`RECEIVE_WAIT_S` answers ``b""``: the line is quiet. An unfinished
+    receive is never returned early; its bytes stay buffered for the next
+    one, across a deadline too.
     """
 
     def __init__(
@@ -211,31 +254,49 @@ class SerialHostServices:
 
     # -- transport ---------------------------------------------------------------
 
-    async def transfer(self, transaction: dict[str, Any], context: Any) -> dict[str, Any]:
-        """Run one bounded transport transaction for the adapter.
-
-        ``stream_exchange`` writes ``data`` then reads once; ``stream_receive``
-        reads once. Reads return up to ``max_bytes`` (capped by
-        :data:`TRANSFER_CEILING`) and wait at most :data:`RECEIVE_WAIT_S`, so
-        a quiet wire yields empty data rather than blocking to the deadline."""
+    def _live(self, context: Any) -> None:
         if context.is_cancelled() or self.monotonic() >= context.deadline_monotonic:
             raise TimeoutError("operation cancelled or expired")
+
+    async def transfer(self, transaction: dict[str, Any], context: Any) -> dict[str, Any]:
+        """Run one OTDP section 8.1 stream transaction for the adapter.
+
+        ``stream_send`` writes ``data`` and answers ``{}``; ``stream_receive``
+        reads; ``stream_exchange`` does both. A transaction missing a field of
+        its kind, or carrying any other, raises ``ValueError`` before any I/O.
+        A receive answers ``{"data": b""}`` when nothing arrives within
+        :data:`RECEIVE_WAIT_S` (a quiet line) and is otherwise only ever
+        answered complete; one still unfinished at the deadline raises
+        ``TimeoutError`` and its bytes stay buffered for the next receive."""
         kind = transaction.get("kind")
-        max_bytes = min(int(transaction.get("max_bytes", 4096)), TRANSFER_CEILING)
-        if max_bytes <= 0:
-            raise ValueError(f"max_bytes must be positive: {max_bytes}")
-        remaining = context.deadline_monotonic - self.monotonic()
-        wait = min(remaining, RECEIVE_WAIT_S)
+        if kind not in _FIELDS or set(transaction) != _FIELDS[kind]:
+            fields = sorted(str(key) for key in transaction)
+            raise ValueError(f"not an OTDP section 8.1 stream transaction: {fields}")
+        receive = None if kind == "stream_send" else _receive_bounds(transaction)
+        if kind != "stream_receive" and not isinstance(transaction["data"], bytes):
+            raise ValueError("data must be bytes")
+        self._live(context)
+        if kind != "stream_receive":
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, self._link.write, transaction["data"])
+        if receive is None:
+            return {}
+        return {"data": await self._receive(*receive, context)}
+
+    async def _receive(self, exact: int, terminator: bytes, max_bytes: int, context: Any) -> bytes:
+        quiet_until = self.monotonic() + RECEIVE_WAIT_S
+        # What the ring already holds is taken without a thread hop.
+        taken = self._link.take(exact, terminator, max_bytes, 0.0)
         loop = asyncio.get_running_loop()
-        if kind == "stream_exchange":
-            data = bytes(transaction.get("data", b""))
-            await loop.run_in_executor(None, self._link.write, data)
-            received = await loop.run_in_executor(None, self._link.read_available, max_bytes, wait)
-            return {"data": received}
-        if kind == "stream_receive":
-            received = await loop.run_in_executor(None, self._link.read_available, max_bytes, wait)
-            return {"data": received}
-        raise ValueError(f"unsupported transaction kind: {kind!r}")
+        while taken is None:
+            if not self._link.buffered and self.monotonic() >= quiet_until:
+                return b""  # nothing offered: a quiet line, not an error
+            self._live(context)  # an unfinished receive stays buffered
+            wait = min(RECEIVE_WAIT_S, context.deadline_monotonic - self.monotonic())
+            taken = await loop.run_in_executor(
+                None, self._link.take, exact, terminator, max_bytes, wait
+            )
+        return taken
 
     async def close_transport(self, context: Any) -> None:
         """Close the underlying serial link (called from the adapter's close)."""
@@ -294,3 +355,22 @@ class SerialHostServices:
         part = self._artifacts.pop(capture_id, None)
         if part is not None:
             part.unlink(missing_ok=True)
+
+
+def _receive_bounds(transaction: dict[str, Any]) -> tuple[int, bytes, int]:
+    """Validate a receive's fields; returns ``(exact, terminator, max_bytes)``."""
+    max_bytes = transaction["max_bytes"]
+    termination = transaction["termination"]
+    exact = transaction["exact_bytes"]
+    if not _is_int(max_bytes) or not 1 <= max_bytes <= TRANSFER_CEILING:
+        raise ValueError(f"max_bytes must be 1..{TRANSFER_CEILING}")
+    if not isinstance(termination, str) or termination not in _TERMINATORS:
+        raise ValueError("termination must be 'lf' or 'crlf' on a serial line")
+    if exact is not None and (not _is_int(exact) or not 0 <= exact <= max_bytes):
+        raise ValueError("exact_bytes must be None or 0..max_bytes")
+    # A positive exact_bytes takes precedence over the terminator.
+    return exact or 0, _TERMINATORS[termination], max_bytes
+
+
+def _is_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)

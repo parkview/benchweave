@@ -150,7 +150,10 @@ at 2 Mbps. Host is the master: it sends commands, the board replies or streams.
   parsed `Sample` vocabulary — `adapter.py` + `descriptor.json` SDK adapter,
   `discovery.py`).
 - `src/benchweave/web/host.py` — host half of the SDK contract (SerialLink,
-  operation contexts, transfer + capture-artifact services).
+  operation contexts, transfer + capture-artifact services). `transfer` speaks
+  OTDP §8.1's stream grammar: the adapter sends each command with
+  `stream_send` and reads with exact-byte `stream_receive` calls (a frame's
+  header, then the rest); an empty receive means the line is quiet.
 - `src/benchweave/web/board.py` — BoardManager: the sync facade that runs the
   adapter on a dedicated host event loop.
 - `firmware/ch32v006e8r_adc/` — matching CH32V006 firmware (C; `make`).

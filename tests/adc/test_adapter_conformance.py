@@ -14,9 +14,8 @@ from benchweave_sdk.validation import validate, validate_descriptor
 
 from plugins.adc_6ch_12bit import protocol
 from plugins.adc_6ch_12bit.adapter import (
-    EXCHANGE,
     RECEIVE,
-    RECEIVE_MAX_BYTES,
+    SEND,
     AdcAdapter,
     _nearest_averaging,
     create_plugin,
@@ -35,13 +34,103 @@ FETCH = "otdp.daq.fetch/1.0.0"
 ABORT = "otdp.daq.abort/1.0.0"
 
 
-def _exchange(command: protocol.FrameType, seq: int, payload: bytes = b"") -> dict[str, Any]:
+Step = tuple[dict[str, Any], dict[str, Any] | Exception]
+
+
+def _receive(size: int) -> dict[str, Any]:
+    """An OTDP section 8.1 exact-byte receive (the terminator is then unused)."""
+    return {"kind": RECEIVE, "max_bytes": size, "termination": "lf", "exact_bytes": size}
+
+
+def _reads(wire: bytes) -> list[Step]:
+    """The exact receives that take whole frames off the line: each header, then its rest."""
+    steps: list[Step] = []
+    while wire:
+        total = protocol.HEADER_LEN + wire[4] + protocol.CRC_LEN
+        head, rest = wire[: protocol.HEADER_LEN], wire[protocol.HEADER_LEN : total]
+        steps += [(_receive(len(head)), {"data": head}), (_receive(len(rest)), {"data": rest})]
+        wire = wire[total:]
+    return steps
+
+
+#: A header read that finds the line quiet.
+QUIET: Step = (_receive(protocol.HEADER_LEN), {"data": b""})
+
+
+def _send(command: protocol.FrameType, seq: int, payload: bytes = b"") -> dict[str, Any]:
     frame = protocol.Frame(type=int(command), seq=seq, payload=payload)
-    return {"kind": EXCHANGE, "data": protocol.encode_frame(frame), "max_bytes": protocol.MAX_FRAME}
+    return {"kind": SEND, "data": protocol.encode_frame(frame)}
 
 
-def _receive() -> dict[str, Any]:
-    return {"kind": RECEIVE, "max_bytes": RECEIVE_MAX_BYTES}
+def _exchange(
+    command: protocol.FrameType, seq: int, payload: bytes = b"", *, reply: bytes | Exception
+) -> list[Step]:
+    """A command's send, then the reads of the frames that answer it."""
+    send = _send(command, seq, payload)
+    if isinstance(reply, Exception):
+        return [(send, reply)]
+    return [(send, {}), *_reads(reply)]
+
+
+def _streaming() -> list[Step]:
+    """What configuring one channel and arming an immediate acquisition puts on the wire."""
+    averaging, _ = _nearest_averaging(100.0, 1)
+    return [
+        *_exchange(
+            protocol.FrameType.SET_AVERAGING,
+            0,
+            protocol.build_set_averaging(averaging),
+            reply=_ack(protocol.FrameType.SET_AVERAGING, averaging),
+        ),
+        *_exchange(
+            protocol.FrameType.SET_CHANNELS,
+            1,
+            protocol.build_set_channels(0b1),
+            reply=_ack(protocol.FrameType.SET_CHANNELS),
+        ),
+        *_exchange(protocol.FrameType.START_STREAM, 2, reply=_ack(protocol.FrameType.START_STREAM)),
+    ]
+
+
+async def _arm(adapter: AdcAdapter, acquisition_id: str) -> None:
+    await check_operation(
+        adapter,
+        _invoke_request("op-c", CONFIGURE, _configure_input(["a0"])),
+        MockContext("op-c", deadline_monotonic=10.0),
+    )
+    await check_operation(
+        adapter,
+        _invoke_request(
+            "op-a",
+            ARM,
+            {
+                "configuration_id": "cfg-1",
+                "acquisition_id": acquisition_id,
+                "max_duration_ms": 1000,
+            },
+        ),
+        MockContext("op-a", deadline_monotonic=10.0),
+    )
+
+
+class _SlowHost(MockHost):
+    """A MockHost whose every transfer takes ``step`` seconds of its clock.
+
+    ``attempts`` counts every transfer asked for, including any the host
+    refuses because the deadline has passed.
+    """
+
+    def __init__(self, exchanges: list[Step], *, step: float) -> None:
+        super().__init__(exchanges)
+        self._step = step
+        self.attempts = 0
+
+    async def transfer(self, transaction: dict[str, Any], context: Any) -> dict[str, Any]:
+        self.attempts += 1
+        try:
+            return await super().transfer(transaction, context)
+        finally:
+            self.advance(self._step)
 
 
 def _ack(command: protocol.FrameType, value: int = 0) -> bytes:
@@ -118,7 +207,7 @@ def test_lifecycle_is_quiet() -> None:
 
 
 def test_identify_round_trip() -> None:
-    host = MockHost([(_exchange(protocol.FrameType.IDENTIFY, 0), {"data": _identify_rsp()})])
+    host = MockHost(_exchange(protocol.FrameType.IDENTIFY, 0, reply=_identify_rsp()))
 
     async def scenario() -> dict[str, Any]:
         adapter = await _open_adapter(host)
@@ -136,30 +225,28 @@ def test_capture_sequence_configure_arm_events_fetch_abort() -> None:
     averaging, achieved = _nearest_averaging(100.0, 2)
     host = MockHost(
         [
-            (
-                _exchange(
-                    protocol.FrameType.SET_AVERAGING, 0, protocol.build_set_averaging(averaging)
-                ),
-                {"data": _ack(protocol.FrameType.SET_AVERAGING, averaging)},
+            *_exchange(
+                protocol.FrameType.SET_AVERAGING,
+                0,
+                protocol.build_set_averaging(averaging),
+                reply=_ack(protocol.FrameType.SET_AVERAGING, averaging),
             ),
-            (
-                _exchange(protocol.FrameType.SET_CHANNELS, 1, protocol.build_set_channels(0b11)),
-                {"data": _ack(protocol.FrameType.SET_CHANNELS)},
+            *_exchange(
+                protocol.FrameType.SET_CHANNELS,
+                1,
+                protocol.build_set_channels(0b11),
+                reply=_ack(protocol.FrameType.SET_CHANNELS),
             ),
-            (
-                _exchange(protocol.FrameType.START_STREAM, 2),
-                {"data": _ack(protocol.FrameType.START_STREAM)},
+            *_exchange(
+                protocol.FrameType.START_STREAM, 2, reply=_ack(protocol.FrameType.START_STREAM)
             ),
-            # One pull returns two samples; next_event consumes the first.
-            (
-                _receive(),
-                {"data": _sample(7, (1, 2, 3, 4, 5, 6)) + _sample(8, (7, 8, 9, 10, 11, 12))},
-            ),
-            # fetch's pump finds the line quiet.
-            (_receive(), {"data": b""}),
-            (
-                _exchange(protocol.FrameType.STOP_STREAM, 3),
-                {"data": _ack(protocol.FrameType.STOP_STREAM)},
+            # next_event reads one frame off the wire: the first sample.
+            *_reads(_sample(7, (1, 2, 3, 4, 5, 6))),
+            # fetch drains until the line is quiet: the second sample, then nothing.
+            *_reads(_sample(8, (7, 8, 9, 10, 11, 12))),
+            QUIET,
+            *_exchange(
+                protocol.FrameType.STOP_STREAM, 3, reply=_ack(protocol.FrameType.STOP_STREAM)
             ),
         ]
     )
@@ -233,20 +320,21 @@ def test_software_trigger_arms_without_wire_io() -> None:
     configure_input["trigger"] = {"kind": "software"}
     host = MockHost(
         [
-            (
-                _exchange(
-                    protocol.FrameType.SET_AVERAGING, 0, protocol.build_set_averaging(averaging)
-                ),
-                {"data": _ack(protocol.FrameType.SET_AVERAGING, averaging)},
+            *_exchange(
+                protocol.FrameType.SET_AVERAGING,
+                0,
+                protocol.build_set_averaging(averaging),
+                reply=_ack(protocol.FrameType.SET_AVERAGING, averaging),
             ),
-            (
-                _exchange(protocol.FrameType.SET_CHANNELS, 1, protocol.build_set_channels(0b1)),
-                {"data": _ack(protocol.FrameType.SET_CHANNELS)},
+            *_exchange(
+                protocol.FrameType.SET_CHANNELS,
+                1,
+                protocol.build_set_channels(0b1),
+                reply=_ack(protocol.FrameType.SET_CHANNELS),
             ),
             # Trigger fires SAMPLE_ONCE because sample_count == 1.
-            (
-                _exchange(protocol.FrameType.SAMPLE_ONCE, 2),
-                {"data": _ack(protocol.FrameType.SAMPLE_ONCE)},
+            *_exchange(
+                protocol.FrameType.SAMPLE_ONCE, 2, reply=_ack(protocol.FrameType.SAMPLE_ONCE)
             ),
         ]
     )
@@ -282,12 +370,7 @@ def test_software_trigger_arms_without_wire_io() -> None:
 
 def test_nak_is_device_rejected_with_dispatched_state() -> None:
     host = MockHost(
-        [
-            (
-                _exchange(protocol.FrameType.IDENTIFY, 0),
-                {"data": _nak(protocol.FrameType.IDENTIFY, 0x03)},
-            )
-        ]
+        _exchange(protocol.FrameType.IDENTIFY, 0, reply=_nak(protocol.FrameType.IDENTIFY, 0x03))
     )
 
     async def scenario() -> dict[str, Any]:
@@ -305,7 +388,7 @@ def test_nak_is_device_rejected_with_dispatched_state() -> None:
 
 
 def test_post_dispatch_transport_loss_reports_unknown() -> None:
-    host = MockHost([(_exchange(protocol.FrameType.RESET, 0), ConnectionError("cable pulled"))])
+    host = MockHost(_exchange(protocol.FrameType.RESET, 0, reply=ConnectionError("cable pulled")))
 
     async def scenario() -> dict[str, Any]:
         adapter = await _open_adapter(host)
@@ -356,31 +439,147 @@ def test_cancelled_context_reports_cancelled_without_transmit() -> None:
     assert host.transfers == []
 
 
+def test_a_reply_after_a_quiet_read_still_completes() -> None:
+    host = MockHost(
+        [
+            *_exchange(protocol.FrameType.IDENTIFY, 0, reply=b""),
+            QUIET,  # the board has not answered yet
+            *_reads(_identify_rsp()),
+        ]
+    )
+
+    async def scenario() -> dict[str, Any]:
+        adapter = await _open_adapter(host)
+        return await check_operation(
+            adapter,
+            {"operation_id": "op-i", "verb": "identify", "arguments": {}},
+            MockContext("op-i", deadline_monotonic=10.0),
+        )
+
+    result = asyncio.run(scenario())
+    host.assert_complete()
+    assert result["status"] == "ok"
+    assert result["data"]["firmware"] == "0.2"
+
+
+def test_no_reply_by_the_deadline_is_an_unknown_timeout() -> None:
+    # Each transfer takes half the budget: the send, then one quiet read, and
+    # the deadline has passed with the command's outcome unknown.
+    host = _SlowHost([*_exchange(protocol.FrameType.IDENTIFY, 0, reply=b""), QUIET], step=0.5)
+
+    async def scenario() -> dict[str, Any]:
+        adapter = await _open_adapter(host)
+        return await check_operation(
+            adapter,
+            {"operation_id": "op-t", "verb": "identify", "arguments": {}},
+            MockContext("op-t", deadline_monotonic=1.0),
+        )
+
+    result = asyncio.run(scenario())
+    host.assert_complete()
+    assert host.attempts == 2  # the adapter stops asking; it does not lean on the host
+    assert result["status"] == "unknown"
+    assert result["error"]["code"] == "TIMEOUT"
+    assert result["error"]["dispatch_state"] == "unknown"
+
+
+def test_a_frame_the_line_pauses_inside_is_kept_until_it_completes() -> None:
+    sample = _sample(5, (11, 0, 0, 0, 0, 0))
+    head, rest = sample[: protocol.HEADER_LEN], sample[protocol.HEADER_LEN :]
+    host = MockHost(
+        [
+            *_streaming(),
+            (_receive(len(head)), {"data": head}),
+            (_receive(len(rest)), {"data": b""}),  # the line pauses mid-frame
+            (_receive(len(rest)), {"data": rest}),  # the next read asks only for the rest
+        ]
+    )
+
+    async def scenario() -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        adapter = await _open_adapter(host)
+        await _arm(adapter, "acq-p")
+        first = await adapter.next_event("acq-p", MockContext("op-e1", deadline_monotonic=10.0))
+        second = await adapter.next_event("acq-p", MockContext("op-e2", deadline_monotonic=10.0))
+        return first, second
+
+    first, second = asyncio.run(scenario())
+    host.assert_complete()
+    assert first is None  # an incomplete frame is never delivered
+    assert second is not None
+    assert second["x-adc-sample"]["counter"] == 5
+    assert second["x-adc-sample"]["channels"][0] == 11
+
+
+def test_a_read_cut_short_by_the_deadline_ends_next_event_quietly() -> None:
+    host = MockHost([*_streaming(), (_receive(protocol.HEADER_LEN), TimeoutError("cut short"))])
+
+    async def scenario() -> dict[str, Any] | None:
+        adapter = await _open_adapter(host)
+        await _arm(adapter, "acq-q")
+        return await adapter.next_event("acq-q", MockContext("op-e", deadline_monotonic=10.0))
+
+    assert asyncio.run(scenario()) is None
+    host.assert_complete()
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        # A send answered as though it were a receive.
+        [(_send(protocol.FrameType.IDENTIFY, 0), {"data": b""})],
+        # An exact 5-byte receive answered short, as text, or without data.
+        [(_send(protocol.FrameType.IDENTIFY, 0), {}), (_receive(5), {"data": b"\xaa\x55\x83"})],
+        [(_send(protocol.FrameType.IDENTIFY, 0), {}), (_receive(5), {"data": "\xaa\x55\x83.."})],
+        [(_send(protocol.FrameType.IDENTIFY, 0), {}), (_receive(5), {})],
+    ],
+    ids=["send-with-data", "short-read", "text-read", "no-data"],
+)
+def test_a_host_breaking_the_exact_byte_contract_is_a_transport_error(
+    script: list[Step],
+) -> None:
+    host = MockHost(script)
+
+    async def scenario() -> dict[str, Any]:
+        adapter = await _open_adapter(host)
+        return await check_operation(
+            adapter,
+            {"operation_id": "op-h", "verb": "identify", "arguments": {}},
+            MockContext("op-h", deadline_monotonic=10.0),
+        )
+
+    result = asyncio.run(scenario())
+    host.assert_complete()
+    assert result["status"] == "unknown"
+    assert result["error"]["code"] == "TRANSPORT_ERROR"
+
+
 def test_interleaved_samples_inside_a_reply_are_buffered() -> None:
     averaging, _ = _nearest_averaging(100.0, 1)
     host = MockHost(
         [
-            (
-                _exchange(
-                    protocol.FrameType.SET_AVERAGING, 0, protocol.build_set_averaging(averaging)
-                ),
-                {"data": _ack(protocol.FrameType.SET_AVERAGING, averaging)},
+            *_exchange(
+                protocol.FrameType.SET_AVERAGING,
+                0,
+                protocol.build_set_averaging(averaging),
+                reply=_ack(protocol.FrameType.SET_AVERAGING, averaging),
             ),
-            (
-                _exchange(protocol.FrameType.SET_CHANNELS, 1, protocol.build_set_channels(0b1)),
-                {"data": _ack(protocol.FrameType.SET_CHANNELS)},
+            *_exchange(
+                protocol.FrameType.SET_CHANNELS,
+                1,
+                protocol.build_set_channels(0b1),
+                reply=_ack(protocol.FrameType.SET_CHANNELS),
             ),
-            (
-                _exchange(protocol.FrameType.START_STREAM, 2),
-                {"data": _ack(protocol.FrameType.START_STREAM)},
+            *_exchange(
+                protocol.FrameType.START_STREAM, 2, reply=_ack(protocol.FrameType.START_STREAM)
             ),
             # The stop reply arrives BEHIND a straggling sample; the sample
             # must be buffered, not lost, and the ACK still matched.
-            (
-                _exchange(protocol.FrameType.STOP_STREAM, 3),
-                {"data": _sample(42, (9, 0, 0, 0, 0, 0)) + _ack(protocol.FrameType.STOP_STREAM)},
+            *_exchange(
+                protocol.FrameType.STOP_STREAM,
+                3,
+                reply=_sample(42, (9, 0, 0, 0, 0, 0)) + _ack(protocol.FrameType.STOP_STREAM),
             ),
-            # Post-abort fetch pumps once; the line is quiet.
+            # The post-abort fetch reads nothing: the acquisition is not running.
         ]
     )
 
@@ -427,24 +626,27 @@ def test_fetch_budget_truncates_or_refuses() -> None:
     samples = b"".join(_sample(i, (i, 0, 0, 0, 0, 0)) for i in range(4))
     host = MockHost(
         [
-            (
-                _exchange(
-                    protocol.FrameType.SET_AVERAGING, 0, protocol.build_set_averaging(averaging)
-                ),
-                {"data": _ack(protocol.FrameType.SET_AVERAGING, averaging)},
+            *_exchange(
+                protocol.FrameType.SET_AVERAGING,
+                0,
+                protocol.build_set_averaging(averaging),
+                reply=_ack(protocol.FrameType.SET_AVERAGING, averaging),
             ),
-            (
-                _exchange(protocol.FrameType.SET_CHANNELS, 1, protocol.build_set_channels(0b1)),
-                {"data": _ack(protocol.FrameType.SET_CHANNELS)},
+            *_exchange(
+                protocol.FrameType.SET_CHANNELS,
+                1,
+                protocol.build_set_channels(0b1),
+                reply=_ack(protocol.FrameType.SET_CHANNELS),
             ),
-            (
-                _exchange(protocol.FrameType.START_STREAM, 2),
-                {"data": _ack(protocol.FrameType.START_STREAM)},
+            *_exchange(
+                protocol.FrameType.START_STREAM, 2, reply=_ack(protocol.FrameType.START_STREAM)
             ),
-            (_receive(), {"data": samples}),
-            (_receive(), {"data": b""}),  # refused fetch drains the line first
-            (_receive(), {"data": b""}),  # partial fetch pump
-            (_receive(), {"data": b""}),  # final fetch pump
+            # next_event takes the first sample; the refused fetch drains the
+            # other three before it finds the line quiet.
+            *_reads(samples),
+            QUIET,
+            QUIET,  # partial fetch
+            QUIET,  # final fetch
         ]
     )
 
@@ -464,7 +666,7 @@ def test_fetch_budget_truncates_or_refuses() -> None:
             ),
             MockContext("op-a", deadline_monotonic=10.0),
         )
-        # Prime the buffer with four samples.
+        # Take the first sample off the wire.
         await adapter.next_event("acq-b", MockContext("op-e", deadline_monotonic=10.0))
         refused = await check_operation(
             adapter,
