@@ -45,9 +45,7 @@ def _run(args: list[str], timeout: float) -> subprocess.CompletedProcess[str]:
             check=False,
         )
     except subprocess.TimeoutExpired as exc:
-        raise TimeoutError(
-            f"sigrok-cli timed out after {timeout}s: {' '.join(args)}"
-        ) from exc
+        raise TimeoutError(f"sigrok-cli timed out after {timeout}s: {' '.join(args)}") from exc
     except FileNotFoundError as exc:
         raise RuntimeError(f"{SIGROK_CLI} not found on PATH") from exc
 
@@ -145,10 +143,14 @@ def capture(
     sr_path = CAPTURE_DIR / f"{stem}.sr"
 
     args = [
-        "-d", "fx2lafw",
-        "--config", f"samplerate={samplerate}",
-        "--channels", channels,
-        "--samples", str(samples),
+        "-d",
+        "fx2lafw",
+        "--config",
+        f"samplerate={samplerate}",
+        "--channels",
+        channels,
+        "--samples",
+        str(samples),
     ]
     if trigger:
         args += ["--triggers", trigger]
