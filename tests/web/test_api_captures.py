@@ -108,20 +108,20 @@ def test_capture_data_unknown_stem_is_404(client: TestClient) -> None:
     assert response.status_code == 404
 
 
-def test_capture_data_traversal_stem_is_404(client: TestClient, captures_dir: Path) -> None:
+def test_capture_data_unsafe_stem_gets_the_route_404(
+    client: TestClient, captures_dir: Path
+) -> None:
+    """A stem the guard refuses gets the route's own 404, not the router's (#9).
+
+    ``..%2Fetc`` never reaches the handler (starlette's router answers 404
+    before it runs), so the earlier form of this test held with the guard
+    deleted. ``a b`` matches the ``{stem}`` segment, reaches ``file_for``
+    and fails the stem alphabet there. The guard itself is pinned in
+    tests/web/test_library.py::test_file_for_guard_is_load_bearing.
+    """
     _write_capture(captures_dir)
-    response = client.get("/api/captures/..%2Fetc/data")
+    response = client.get("/api/captures/a%20b/data")
     assert response.status_code == 404
-
-
-# -- /file ------------------------------------------------------------------------------
-
-
-def test_capture_file_csv(client: TestClient, captures_dir: Path) -> None:
-    _write_capture(captures_dir)
-    response = client.get(f"/api/captures/{STEM}/file")
-    assert response.status_code == 200
-    assert response.text == CSV
     assert response.json()["detail"] == "no CSV for 'a b'"
 
 
@@ -145,6 +145,16 @@ def test_capture_data_default_budget_caps_a_long_series(
     response = client.get(f"/api/captures/{STEM}/data")
     assert response.status_code == 200
     assert len(response.json()["series"][0]["points"]) <= web_app.MAX_DATA_POINTS
+
+
+# -- /file ------------------------------------------------------------------------------
+
+
+def test_capture_file_csv(client: TestClient, captures_dir: Path) -> None:
+    _write_capture(captures_dir)
+    response = client.get(f"/api/captures/{STEM}/file")
+    assert response.status_code == 200
+    assert response.text == CSV
     assert "content-security-policy" not in response.headers
 
 

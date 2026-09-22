@@ -183,6 +183,23 @@ def test_file_for_rejects_traversal(library: CaptureLibrary) -> None:
     assert library.file_for(STEM, "html") is None
 
 
+def test_file_for_guard_is_load_bearing(tmp_path: Path) -> None:
+    """The stem alphabet is what stops a traversal, not the suffixing (#9).
+
+    A capture-shaped file is planted one level above the captures directory,
+    exactly where ``../outside`` resolves. Without the guard ``file_for``
+    returns that path (``captures/../outside.csv`` is a file); with it, None.
+    The earlier test could not tell the two apart: an absent file also
+    returns None.
+    """
+    captures = tmp_path / "captures"
+    captures.mkdir()
+    (tmp_path / "outside.csv").write_text("timestamp\n", encoding="utf-8")
+    lib = CaptureLibrary(captures_dir=captures, db_path=tmp_path / "library.db")
+    assert (captures / "../outside.csv").is_file()  # the traversal target exists
+    assert lib.file_for("../outside", "csv") is None
+
+
 def test_project_crud(library: CaptureLibrary) -> None:
     library.create_project("bench", retention_days=30)
     assert {p["name"] for p in library.list_projects()} == {"bench"}
