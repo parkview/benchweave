@@ -1,3 +1,4 @@
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import cast
@@ -206,3 +207,65 @@ def test_sample_once_returns_converted_sample(manager: BoardManager) -> None:
     assert result["averaged_n"] == 0
     assert channels
     assert all("name" in c and "value" in c for c in channels)
+
+
+def test_worker_fault_releases_the_recorder(manager: BoardManager, tmp_path: Path) -> None:
+    """A driver fault mid-recording closes the recorder and clears the state (#7).
+
+    The worker's except block used to leave ``_recorder`` open and
+    ``_recording`` True while ``_streaming`` went False, and
+    ``_stop_stream_locked`` returned early on ``_streaming``, so no later
+    ``stop_stream()`` ever flushed the file: buffered rows were lost and the
+    handle leaked until exit. The spy recorder's ``closed`` flag is the pin.
+    """
+    class _PathSpy(_SpyRecorder):
+        def __init__(self, path: str, *args: object, **kwargs: object) -> None:
+            super().__init__()
+            self.path = path  # start_stream reads it back into record_path
+
+    spies: list[_PathSpy] = []
+
+    def make_recorder(path: str, *args: object, **kwargs: object) -> _PathSpy:
+        spy = _PathSpy(path, *args, **kwargs)
+        spies.append(spy)
+        return spy
+
+    def faulting() -> Iterator[Sample]:
+        yield from _samples(1)
+        raise OSError("serial gone")
+
+    _driver_of(manager).samples = faulting()
+    with (
+        mock.patch("benchweave.web.board.capture_dir", return_value=tmp_path),
+        mock.patch("benchweave.web.board._Recorder", side_effect=make_recorder),
+    ):
+        manager.start_stream(record=True)
+        # The worker owns the failure path; it may already be gone when we
+        # look, so wait for the outcome rather than for the thread object.
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and not (spies and spies[0].closed):
+            time.sleep(0.01)
+
+    assert spies and spies[0].closed, "the fault path must close the recorder"
+    status = manager.status()
+    assert status["streaming"] is False
+    assert status["recording"] is False
+    assert str(status["last_error"]).startswith("stream stopped:")
+    # A later stop is a clean no-op, not a second close or a traceback.
+    manager.stop_stream()
+    assert manager.status()["recording"] is False
+
+
+def test_locked_stop_closes_the_recorder_when_the_stream_already_stopped(
+    manager: BoardManager,
+) -> None:
+    """``_stop_stream_locked`` flushes and closes even with ``_streaming`` False (#7)."""
+    spy = _SpyRecorder()
+    manager._streaming = False
+    manager._recording = True
+    manager._recorder = spy  # type: ignore[assignment]
+    with manager._lock:
+        manager._stop_stream_locked()
+    assert spy.closed
+    assert manager._recorder is None
+    assert manager._recording is False

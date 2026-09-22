@@ -536,13 +536,14 @@ class BoardManager:
             self._worker = None
 
     def _stop_stream_locked(self) -> None:
-        if not self._streaming:
-            return
-        with suppress(Exception):
-            self._driver.stop_stream()
-        self._streaming = False
-        self._paused = False
-        self._join_worker()
+        if self._streaming:
+            with suppress(Exception):
+                self._driver.stop_stream()
+            self._streaming = False
+            self._paused = False
+            self._join_worker()
+        # Past this point the stream is stopped whoever stopped it; the
+        # recorder is flushed and closed exactly once either way (#7).
         self._recording = False
         if self._recorder is not None:
             with suppress(Exception):
@@ -592,6 +593,18 @@ class BoardManager:
             self._last_error = f"stream stopped: {exc}"
             self._streaming = False
             self._paused = False
+            # _streaming is already False, so a later stop_stream() would not
+            # release the recorder: buffered rows would never be flushed and
+            # the CSV handle would leak until exit (#7). Release it here, the
+            # way _stop_stream_locked does, and stop claiming a recording that
+            # is no longer being written. record_path is kept, as it is after
+            # a normal stop, so the graph can still be saved beside the CSV.
+            self._recording = False
+            self._worker = None
+            stale, self._recorder = self._recorder, None
+            if stale is not None:
+                with suppress(Exception):
+                    stale.close()
 
     def _publish(self, sample: Sample) -> None:
         for q in self._subscribers:
