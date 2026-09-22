@@ -44,16 +44,8 @@ dev = [
   # Dev-only: adapter conformance (MockHost/check_lifecycle) and offline
   # descriptor/envelope validation. Runtime code never imports the SDK —
   # the Adapter/HostServices contracts are structural Protocols.
-  "benchweave-sdk",
+  "benchweave-sdk>=0.1.0",
 ]
-
-[tool.uv.sources]
-# The plugin targets OTDP 0.2.0, which the SDK vendors from 0.0.3. Installing
-# the SDK from upstream git still fails on Windows until the .gitattributes
-# fix merges (madeinoz67/benchweave-sdk#9), so this pins the fork branch that
-# carries upstream main plus that fix. uv.lock holds the exact commit. Once a
-# release includes #9, switch to a plain 'benchweave-sdk>=<that release>'.
-benchweave-sdk = { git = "https://github.com/platima/benchweave-sdk", branch = "fix/portability-and-correctness" }
 
 [project.scripts]
 benchweave-adc = "benchweave.__main__:main"
