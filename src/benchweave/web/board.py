@@ -95,6 +95,8 @@ _STREAM_MAX_DURATION_MS = 24 * 60 * 60 * 1000
 _PUMP_DEADLINE_S = 24 * 60 * 60.0
 #: How long a single-shot acquisition waits for its sample frame.
 _SINGLE_SAMPLE_TIMEOUT_S = 2.0
+#: How long a failed pump waits on its own abort (inside _stop_pump_locked's 2 s).
+_FAULT_ABORT_TIMEOUT_S = 1.0
 #: "Unbounded" sample budget for streaming configurations.
 _STREAM_SAMPLE_COUNT = 1_000_000
 
@@ -1001,10 +1003,31 @@ class BoardManager:
             # claiming a stream that is no longer running.
             _LOG.exception("stream pump stopped on error")
             self._last_error = f"stream stopped: {exc}"
+            # A CSV write failure leaves the board streaming on a healthy link,
+            # and once _streaming is False _stop_stream_locked skips the abort
+            # (#12): abort here, awaited directly because _invoke would block
+            # this (the host) loop on itself. On a faulted link the STOP_STREAM
+            # send fails at once, and the short deadline bounds a silent board.
+            abort = AdcOperationContext(
+                operation_id=f"{acquisition_id}-abort",
+                deadline_monotonic=time.monotonic() + _FAULT_ABORT_TIMEOUT_S,
+            )
+            with suppress(Exception):
+                await adapter.execute(
+                    {
+                        "operation_id": abort.operation_id,
+                        "verb": "invoke",
+                        "arguments": {
+                            "action_id": _ACTION_ABORT,
+                            "input": {"acquisition_id": acquisition_id},
+                        },
+                    },
+                    abort,
+                )
             self._streaming = False
             self._paused = False
-            # Mirror _stop_stream_locked's cleanup: _streaming is already
-            # False, so no later stop_stream/disconnect will release the
+            # Mirror the rest of _stop_stream_locked's cleanup: _streaming is
+            # already False, so no later stop_stream/disconnect will release the
             # recorder — do it here or the CSV handle leaks and the next
             # start_stream overwrites an open recorder.
             self._recording = False

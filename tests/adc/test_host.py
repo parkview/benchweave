@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import threading
 import time
 from collections.abc import Iterator
@@ -156,6 +157,25 @@ def test_link_write_fault_flips_faulted(transport: ScriptedTransport, link: Seri
     assert link.faulted
     with pytest.raises(ConnectionError):
         link.take(1, b"\n", 1, 0.1)
+
+
+@pytest.mark.parametrize("sent", [0, 2])
+def test_link_short_write_is_a_fault(
+    transport: ScriptedTransport, link: SerialLink, monkeypatch: pytest.MonkeyPatch, sent: int
+) -> None:
+    monkeypatch.setattr(transport, "write", lambda data: sent)
+    with pytest.raises(ConnectionError, match=f"reported {sent} of 3 bytes"):
+        link.write(b"cmd")
+    assert link.faulted
+
+
+def test_link_write_trusts_a_transport_that_reports_no_count(
+    transport: ScriptedTransport, link: SerialLink, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """pyserial's rs485.RS485.write returns None on every call."""
+    monkeypatch.setattr(transport, "write", lambda data: None)
+    link.write(b"cmd")
+    assert not link.faulted
 
 
 def test_link_read_fault_wakes_waiters(transport: ScriptedTransport, link: SerialLink) -> None:
@@ -361,6 +381,20 @@ def test_record_evidence_appends_json_lines(link: SerialLink, tmp_path: Path) ->
     assert len(lines) == 1
     assert '"operation_id":"op-test"' in lines[0]
     assert '"kind":"probe"' in lines[0]
+
+
+def test_record_evidence_host_fields_win_over_the_entry(
+    link: SerialLink, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    evidence = tmp_path / "evidence.jsonl"
+    services = _services(link, tmp_path, evidence_path=evidence)
+    monkeypatch.setattr(services, "utc_now", lambda: "host-clock")
+    entry = {"kind": "probe", "at": "caller", "operation_id": "op-spoof"}
+    asyncio.run(services.record_evidence(entry, _context()))
+
+    record = json.loads(evidence.read_text(encoding="utf-8"))
+    assert record == {"kind": "probe", "at": "host-clock", "operation_id": "op-test"}
+    assert entry["operation_id"] == "op-spoof"  # the caller's dict is not mutated
 
 
 def test_record_evidence_is_a_noop_without_a_path(link: SerialLink, tmp_path: Path) -> None:

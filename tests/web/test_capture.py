@@ -239,6 +239,37 @@ def test_pump_fault_releases_the_recorder(
     assert manager.status()["recording"] is False
 
 
+def test_pump_recorder_fault_stops_the_board(
+    stack: tuple[BoardManager, TransportFactory], tmp_path: Path
+) -> None:
+    """A CSV write failure aborts the acquisition, not just the manager's flag (#12).
+
+    The pump's except block cleared ``_streaming`` without an abort, and
+    ``_stop_stream_locked`` returns early on ``_streaming``, so nothing ever
+    stopped the board: its orphaned stream filled the serial ring and the
+    next stream or capture began with stale samples recorded as fresh.
+    """
+
+    class _FailingRecorder(_SpyRecorder):
+        def __init__(self, path: str, *args: object, **kwargs: object) -> None:
+            super().__init__()
+            self.path = path
+
+        def write(self, counter: int, averaged_n: int, values: list[object]) -> None:
+            raise OSError("disk full")
+
+    manager, factory = stack
+    factory.last.set_samples(_samples(50))
+    with (
+        mock.patch("benchweave.web.board.capture_dir", return_value=tmp_path),
+        mock.patch("benchweave.web.board._Recorder", _FailingRecorder),
+    ):
+        manager.start_stream(record=True)
+        wait_until(lambda: manager.status()["streaming"] is False)
+
+    assert factory.last.streaming is False, "the fault path must stop the board"
+
+
 def test_locked_stop_closes_the_recorder_when_the_stream_already_stopped(
     stack: tuple[BoardManager, TransportFactory],
 ) -> None:
