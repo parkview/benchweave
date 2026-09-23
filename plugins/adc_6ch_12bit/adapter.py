@@ -378,6 +378,11 @@ class AdcAdapter:
                 await self._transact(protocol.FrameType.START_STREAM, b"", context),
                 "START_STREAM",
             )
+        # The firmware answers a command before it samples again, so anything
+        # buffered before this ACK predates the start: a board still streaming
+        # from an earlier session would otherwise hand the acquisition its
+        # stale backlog as fresh samples (#14).
+        acquisition.samples.clear()
         acquisition.state = "running"
 
     async def _abort(self, action_input: dict[str, Any], context: Any) -> dict[str, Any]:

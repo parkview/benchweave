@@ -72,7 +72,7 @@ def _exchange(
     return [(send, {}), *_reads(reply)]
 
 
-def _streaming() -> list[Step]:
+def _streaming(start_reply: bytes | None = None) -> list[Step]:
     """What configuring one channel and arming an immediate acquisition puts on the wire."""
     averaging, _ = _nearest_averaging(100.0, 1)
     return [
@@ -88,7 +88,11 @@ def _streaming() -> list[Step]:
             protocol.build_set_channels(0b1),
             reply=_ack(protocol.FrameType.SET_CHANNELS),
         ),
-        *_exchange(protocol.FrameType.START_STREAM, 2, reply=_ack(protocol.FrameType.START_STREAM)),
+        *_exchange(
+            protocol.FrameType.START_STREAM,
+            2,
+            reply=_ack(protocol.FrameType.START_STREAM) if start_reply is None else start_reply,
+        ),
     ]
 
 
@@ -508,6 +512,31 @@ def test_a_frame_the_line_pauses_inside_is_kept_until_it_completes() -> None:
     assert second is not None
     assert second["x-adc-sample"]["counter"] == 5
     assert second["x-adc-sample"]["channels"][0] == 11
+
+
+def test_samples_read_before_the_start_ack_are_dropped() -> None:
+    """A board still streaming hands over a backlog ahead of the START_STREAM ACK (#14).
+
+    The firmware answers a command before it samples again, so anything read
+    before the ACK predates the start and must not reach the acquisition.
+    """
+    stale = _sample(1, (7, 0, 0, 0, 0, 0))
+    host = MockHost(
+        [
+            *_streaming(start_reply=stale + _ack(protocol.FrameType.START_STREAM)),
+            *_reads(_sample(99, (8, 0, 0, 0, 0, 0))),
+        ]
+    )
+
+    async def scenario() -> dict[str, Any] | None:
+        adapter = await _open_adapter(host)
+        await _arm(adapter, "acq-f")
+        return await adapter.next_event("acq-f", MockContext("op-e", deadline_monotonic=10.0))
+
+    event = asyncio.run(scenario())
+    host.assert_complete()
+    assert event is not None
+    assert event["x-adc-sample"]["counter"] == 99  # not the stale sample 1
 
 
 def test_a_read_cut_short_by_the_deadline_ends_next_event_quietly() -> None:
