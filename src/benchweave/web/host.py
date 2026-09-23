@@ -92,10 +92,18 @@ class SerialLink:
         if self._faulted or not self._running:
             raise ConnectionError("serial link is closed or faulted")
         try:
-            self._transport.write(data)
+            sent = self._transport.write(data)
         except Exception as exc:
             self._fault()
             raise ConnectionError(f"serial write failed: {exc}") from exc
+        # pyserial reports a short count without raising when a pending write
+        # is cancelled (closing the port does this on Windows) or under
+        # write_timeout=0. Part of a frame on the wire puts the board's parser
+        # out of step, so it faults the link like a failed write. None means
+        # no count: pyserial's own rs485.RS485 and cp2110:// ports return it.
+        if sent is not None and sent != len(data):
+            self._fault()
+            raise ConnectionError(f"serial write reported {sent} of {len(data)} bytes")
 
     @property
     def buffered(self) -> int:
@@ -279,7 +287,8 @@ class SerialHostServices:
         if self._evidence_path is None:
             return
         line = json.dumps(
-            {"at": self.utc_now(), "operation_id": context.operation_id, **entry},
+            # The host owns the timestamp and operation id; an entry cannot shadow them.
+            {**entry, "at": self.utc_now(), "operation_id": context.operation_id},
             separators=(",", ":"),
         )
         self._evidence_path.parent.mkdir(parents=True, exist_ok=True)
