@@ -257,6 +257,36 @@ def test_worker_fault_releases_the_recorder(manager: BoardManager, tmp_path: Pat
     assert manager.status()["recording"] is False
 
 
+def test_worker_recorder_fault_stops_the_board(manager: BoardManager, tmp_path: Path) -> None:
+    """A CSV write failure stops the driver, not just the manager's flag (#12).
+
+    The worker's except block cleared ``_streaming`` without a stop, and
+    ``_stop_stream_locked`` returns early on ``_streaming``, so nothing ever
+    told the board: it kept streaming into a driver stuck in STREAMING.
+    """
+
+    class _FailingRecorder(_SpyRecorder):
+        def __init__(self, path: str, *args: object, **kwargs: object) -> None:
+            super().__init__()
+            self.path = path
+
+        def write(self, counter: int, averaged_n: int, values: list[object]) -> None:
+            raise OSError("disk full")
+
+    _driver_of(manager).samples = iter(_samples(50))
+    with (
+        mock.patch("benchweave.web.board.capture_dir", return_value=tmp_path),
+        mock.patch("benchweave.web.board._Recorder", _FailingRecorder),
+    ):
+        manager.start_stream(record=True)
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and manager.status()["streaming"]:
+            time.sleep(0.01)
+
+    assert manager.status()["streaming"] is False
+    assert _driver_of(manager).streaming is False, "the fault path must stop the board"
+
+
 def test_locked_stop_closes_the_recorder_when_the_stream_already_stopped(
     manager: BoardManager,
 ) -> None:

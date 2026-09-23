@@ -591,6 +591,12 @@ class BoardManager:
             # claiming a stream that is no longer running.
             _LOG.exception("stream worker stopped on error")
             self._last_error = f"stream stopped: {exc}"
+            # A CSV write failure leaves the driver (and the board) streaming,
+            # and once _streaming is False _stop_stream_locked skips the stop
+            # (#12): send it here. A faulted driver refuses before writing, so
+            # a dead transport costs nothing.
+            with suppress(Exception):
+                self._driver.stop_stream()
             self._streaming = False
             self._paused = False
             # _streaming is already False, so a later stop_stream() would not
