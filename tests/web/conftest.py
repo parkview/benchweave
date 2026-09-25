@@ -14,10 +14,10 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from fakes import FakeBoardManager
 from fastapi.testclient import TestClient
 
 from benchweave.web.library import CaptureLibrary
+from tests.web.fakes import FakeBoardManager
 
 
 @pytest.fixture

@@ -8,7 +8,7 @@ from typing import Any
 
 from benchweave.web.board import _validate_config
 from plugins.adc_6ch_12bit.config import DEFAULT_CONFIG
-from plugins.adc_6ch_12bit.driver import Sample
+from plugins.adc_6ch_12bit.protocol import Sample
 
 #: A stem matching the ``adc_<serial>[_<tag>]_<YYYYmmdd_HHMMSS>`` naming scheme.
 STEM = "adc_1234_test_20260914_120000"

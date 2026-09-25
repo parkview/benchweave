@@ -14,7 +14,7 @@ from plugins.adc_6ch_12bit.config import (
     output_channels,
     save_config,
 )
-from plugins.adc_6ch_12bit.driver import Sample
+from plugins.adc_6ch_12bit.protocol import Sample
 
 
 def test_default_config_has_six_channels_in_order() -> None:
