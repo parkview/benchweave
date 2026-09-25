@@ -1,5 +1,5 @@
 {
-  "otdp_version": "0.2.0",
+  "otdp_version": "0.2.2",
   "descriptor_version": "1.0.0",
   "id": "community.benchweave-adc.adc-6ch-12bit",
   "display_name": "6-channel 12-bit ADC capture board",
@@ -208,14 +208,14 @@
   },
   "contracts": [
     {
-      "id": "urn:otdp:profile-catalog:0.2.0",
+      "id": "urn:otdp:profile-catalog:0.2.2",
       "path": "device-profile-catalog.json",
-      "sha256": "dc776ec3dd02f3b37e02005f79434597f220b5acb5d6c23c98b844aa3e63d923"
+      "sha256": "2e8c7841a397f794724ab2f484e7531cef47889c5f514ed68ff2c1273f0b493c"
     },
     {
-      "id": "urn:otdp:measurement:0.2.0",
+      "id": "urn:otdp:measurement:0.2.2",
       "path": "otdp-measurement.schema.json",
-      "sha256": "e911d0efec92a5167788dc59c40acdbf62e99f82249fcc99bf2e57ffe5331382"
+      "sha256": "7905795bed6139b9705edfa17b7a17226b99cddda6656030d73bb63dc998a4b3"
     }
   ]
 }
