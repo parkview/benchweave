@@ -49,6 +49,45 @@ uv run python scripts/adc_capture.py --seconds 10 --out capture.csv
 The MCP server is launched by MCP clients as `uv run benchweave-adc-mcp`
 (see `.mcp.json`).
 
+## Reflashing the firmware (kickstart)
+
+The board's CH32V006 has **no external BOOT0 pin**, so the serial ISP path
+(`wchisp`) **cannot** reflash a chip that is already running firmware — it
+answers the ISP handshake with its own UART traffic instead of entering the
+bootloader. Reflash over the debug interface instead (WCH-Link, 1-wire SDI).
+
+Do this, then do that:
+
+1. **Identify the devices.** The ADC UART (CH343G bridge) and the WCH-Link
+   programmer enumerate as separate `/dev/ttyACM*` ports — trust the USB PID,
+   not physical labels:
+   ```sh
+   uv run python -c "import serial.tools.list_ports as lp; [print(p.device, f'{p.vid:04x}:{p.pid:04x}' if p.vid else 'unknown', p.serial_number) for p in lp.comports()]"
+   ```
+   `55d3` = the ADC board; `8010` = the WCH-Link.
+
+2. **Locate the hex.** `firmware/ch32v006e8r_adc/build/ch32v006e8r_adc.hex` is
+   the current build (`make` in that directory rebuilds it). Ignore the stale
+   `obj/CH32V006E8R-ADC-PCB.hex`.
+
+3. **Flash via OpenOCD + WCH-Link.** The `-s <dir>` flag is required (OpenOCD
+   does not search its own binary directory for `wch-riscv.cfg`), and `unlock`
+   clears read-out protection:
+   ```sh
+   OPENOCD=/usr/share/MRS2/MRS-linux-x64/resources/app/resources/linux/components/WCH/OpenOCD/OpenOCD/bin
+   HEX=firmware/ch32v006e8r_adc/build/ch32v006e8r_adc.hex
+   "$OPENOCD/openocd" -s "$OPENOCD" -f wch-riscv.cfg \
+     -c "chip_id CH32V002/4/5/6/7" -c "page_erase" -c "init" -c "reset halt" \
+     -c "flash write_image erase unlock $HEX" -c "verify_image $HEX" \
+     -c "reset run" -c "exit"
+   ```
+
+4. **Verify.** Discovery should report fw `0.2`, 6 ch, 12-bit:
+   ```sh
+   uv run python -c "from plugins.adc_6ch_12bit.discovery import discover_adc_boards; print(discover_adc_boards())"
+   ```
+   Then `sample_once()` returning real 12-bit values confirms end-to-end.
+
 ## Security posture
 
 The web app has **no authentication, CORS policy, or CSRF protection** — it
