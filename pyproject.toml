@@ -44,7 +44,7 @@ dev = [
   # Dev-only: adapter conformance (MockHost/check_lifecycle) and offline
   # descriptor/envelope validation. Runtime code never imports the SDK —
   # the Adapter/HostServices contracts are structural Protocols.
-  "benchweave-sdk>=0.1.0",
+  "benchweave-sdk>=0.2.0",
 ]
 
 [project.scripts]
