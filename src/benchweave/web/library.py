@@ -33,7 +33,30 @@ _POWER_MODES = ("battery", "dc-dc", "sleep", "load-step")
 
 
 class CaptureLibrary:
-    """Browse and manage captured ADC files with a SQLite metadata overlay."""
+    """Browse and manage captured ADC files with a SQLite metadata overlay.
+
+    The filesystem stays the source of truth for what exists; the database
+    (``library.db`` beside the captures directory) only overlays metadata.
+    It runs in WAL mode with a 5 s busy timeout because the web app and the
+    MCP server are separate processes sharing the same file. Tables:
+
+    - ``projects``: ``name`` -> ``retention_days`` (NULL inherits the global
+      ``settings.retention_days``).
+    - ``captures``: one row per stem, with ``project`` (ON DELETE SET NULL),
+      ``assigned_at``, and ``missing_since`` - stamped when the stem's files
+      are absent from disk and cleared when they reappear, so a temporarily
+      unmounted drive or a sync client mid-flight never destroys metadata.
+    - ``annotations``: ``stem`` -> JSON list of A-Z letter markers
+      (ON DELETE CASCADE from ``captures``).
+    - ``power_analysis``: ``stem`` -> JSON power-analysis setup plus
+      ``saved_at`` (ON DELETE CASCADE from ``captures``).
+    - ``settings``: string key/value pairs (default power mode, the global
+      assertions).
+
+    Rows are hard-deleted in exactly one place - :meth:`trash` - and only for
+    a stem the user explicitly trashed, once no file of any kind remains on
+    disk. Everything else marks, never deletes.
+    """
 
     def __init__(self, db_path: Path | None = None, captures_dir: Path | None = None) -> None:
         self._captures_dir = captures_dir if captures_dir is not None else capture_dir()
@@ -145,6 +168,7 @@ class CaptureLibrary:
     # -- projects ------------------------------------------------------------
 
     def list_projects(self) -> list[dict[str, object]]:
+        """Return every project (name and retention_days), sorted by name."""
         conn = self._connect()
         try:
             with self._lock, conn:
@@ -156,6 +180,8 @@ class CaptureLibrary:
             conn.close()
 
     def create_project(self, name: str, retention_days: int | None = None) -> dict[str, object]:
+        """Create a project; ``retention_days`` of None inherits the global
+        default. Raises ``ValueError`` on an empty or already-taken name."""
         name = name.strip()
         if not name:
             raise ValueError("project name is required")
@@ -173,6 +199,8 @@ class CaptureLibrary:
         return {"name": name, "retention_days": retention_days}
 
     def set_project_retention(self, name: str, retention_days: int | None) -> dict[str, object]:
+        """Change a project's retention period (None inherits the global
+        default). Raises ``ValueError`` for an unknown project."""
         conn = self._connect()
         try:
             with self._lock, conn:
@@ -187,6 +215,9 @@ class CaptureLibrary:
         return {"name": name, "retention_days": retention_days}
 
     def assign_project(self, stem: str, project: str | None) -> dict[str, object]:
+        """Assign a capture stem to a project (None clears the assignment),
+        upserting the capture row. Raises ``ValueError`` for an unknown
+        project."""
         conn = self._connect()
         try:
             with self._lock, conn:
@@ -271,6 +302,7 @@ class CaptureLibrary:
     # -- power analysis ------------------------------------------------------
 
     def get_setting(self, key: str, default: str | None = None) -> str | None:
+        """Read one value from the ``settings`` table, or ``default``."""
         conn = self._connect()
         try:
             with self._lock, conn:
@@ -280,6 +312,7 @@ class CaptureLibrary:
         return row["value"] if row else default
 
     def set_setting(self, key: str, value: str) -> None:
+        """Insert or replace one value in the ``settings`` table."""
         conn = self._connect()
         try:
             with self._lock, conn:
@@ -292,6 +325,8 @@ class CaptureLibrary:
             conn.close()
 
     def set_default_mode(self, mode: str) -> str:
+        """Persist the default power-analysis mode and return what was stored
+        (an unknown mode falls back to "battery")."""
         if mode not in _POWER_MODES:
             mode = "battery"
         self.set_setting("power_mode", mode)
@@ -336,6 +371,12 @@ class CaptureLibrary:
         return {d["name"] for d in descs}
 
     def get_power(self, stem: str) -> dict[str, object]:
+        """Return the capture's power-analysis setup (mode plus V/I rails).
+
+        Falls back through: the setup saved for this stem, then the most
+        recently saved setup whose rail channels all exist in this capture,
+        then the default mode with no rails. ``source`` reports which level
+        answered ("capture", "reused", or "default")."""
         names = self._channel_names(stem)
         conn = self._connect()
         try:
@@ -371,6 +412,9 @@ class CaptureLibrary:
             conn.close()
 
     def set_power(self, stem: str, state: dict[str, object]) -> dict[str, object]:
+        """Validate and save a capture's power-analysis setup (mode plus at
+        most two V/I rails), upserting the capture row; return the cleaned
+        state."""
         cleaned = self._clean_power(state)
         conn = self._connect()
         try:
@@ -425,6 +469,8 @@ class CaptureLibrary:
         return out
 
     def get_assertions(self) -> list[dict[str, object]]:
+        """Return the global assertions: per-channel-name min/max bounds,
+        stored in ``settings`` and checked against any capture."""
         raw = self.get_setting("assertions")
         if not raw:
             return []
@@ -437,6 +483,8 @@ class CaptureLibrary:
         return self._clean_assertions(cast(list[dict[str, object]], data))
 
     def set_assertions(self, items: list[dict[str, object]]) -> list[dict[str, object]]:
+        """Replace the global assertions with the validated list (unique
+        names, at least one finite bound each) and return what was stored."""
         cleaned = self._clean_assertions(items)
         self.set_setting("assertions", json.dumps(cleaned))
         return cleaned
@@ -525,6 +573,13 @@ class CaptureLibrary:
     # -- listing / scan ------------------------------------------------------
 
     def scan(self) -> list[dict[str, object]]:
+        """List every capture file on disk, newest first, as flat records.
+
+        Each record carries the stem, kind (csv/png/html), serial, tag,
+        capture time (parsed from the filename, else mtime), size, project,
+        effective retention, and whether that retention has expired. Also
+        reconciles the database with the files currently on disk (see
+        :meth:`_reconcile`)."""
         files = self._iter_files()
         stems = {f.stem for f in files}
 
@@ -582,6 +637,8 @@ class CaptureLibrary:
         return sorted({str(r["stem"]) for r in self.scan() if r["expired"]})
 
     def storage_stats(self) -> dict[str, object]:
+        """Total capture storage (bytes, file count) with a per-project
+        breakdown; unassigned files land under "(unassigned)"."""
         by_project: dict[str, dict[str, int]] = {}
         total = 0
         count = 0
@@ -605,6 +662,12 @@ class CaptureLibrary:
     # -- trash ---------------------------------------------------------------
 
     def trash(self, stems: list[str]) -> dict[str, object]:
+        """Move every file of the given stems to the OS trash (recoverable,
+        never a hard file delete) and report successes and failures.
+
+        Database rows die here and only here: a stem is deleted from
+        ``captures`` (cascading to annotations and power analysis) once no
+        file of any kind remains for it on disk."""
         targets = [p for p in self._iter_files() if p.stem in stems]
         trashed: list[dict[str, str]] = []
         errors: list[dict[str, str]] = []
@@ -688,6 +751,11 @@ class CaptureLibrary:
         return scalars, descs
 
     def parse_csv(self, path: Path | str) -> dict[str, object]:
+        """Parse a capture CSV into metadata and per-channel series.
+
+        Returns the ``#`` header scalars and channel descriptors plus, per
+        channel column, a series of ``[elapsed_s, value]`` points (value None
+        where a cell failed to parse), with the sample count and duration."""
         path = Path(path)
         # One read serves both the metadata header and the data rows; the
         # file was previously read (and decoded) twice per call.

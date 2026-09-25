@@ -10,7 +10,7 @@ uv run --no-sync ruff check .
 uv run --no-sync ruff format --check .
 uv run --no-sync mypy
 uv run --no-sync pytest
-uv run --no-sync benchweave
+uv run --no-sync benchweave-adc
 uv build
 ```
 

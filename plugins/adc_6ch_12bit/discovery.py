@@ -9,14 +9,17 @@ signature (protocol 1, 6 channels, 12-bit resolution).
 
 from __future__ import annotations
 
+import contextlib
 import os
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+import serial  # type: ignore[import-untyped]
 from serial.tools import list_ports  # type: ignore[import-untyped]
 
-from .driver import AdcDriver
+from . import protocol
 from .protocol import IdentifyInfo
 
 WCH_VENDOR_ID = 0x1A86  # WCH (CH343G / CH340 / CH9102) USB-UART bridges
@@ -24,6 +27,9 @@ WCH_VENDOR_ID = 0x1A86  # WCH (CH343G / CH340 / CH9102) USB-UART bridges
 EXPECTED_PROTOCOL = 1
 EXPECTED_CHANNELS = 6
 EXPECTED_RESOLUTION = 12
+
+#: Per-read serial timeout while probing; the overall budget is the caller's.
+_PROBE_READ_TIMEOUT = 0.05
 
 
 @dataclass(frozen=True)
@@ -64,6 +70,39 @@ def serial_for_device(device: str) -> str:
     return ""
 
 
+def _probe(port_device: str, baud: int, timeout: float) -> IdentifyInfo | None:
+    """One-shot IDENTIFY probe of a serial port, straight over the wire codec.
+
+    Opens the port, transmits a single IDENTIFY frame, and feeds whatever
+    arrives within ``timeout`` seconds to a :class:`protocol.FrameParser`.
+    The first IDENTIFY_RSP wins; anything else (silence, noise, an alien
+    protocol) yields ``None``. The port is always closed before returning.
+    """
+    try:
+        transport = serial.Serial(port_device, baud, timeout=_PROBE_READ_TIMEOUT)
+    except Exception:
+        return None
+    try:
+        frame = protocol.Frame(type=int(protocol.FrameType.IDENTIFY), seq=0, payload=b"")
+        transport.write(protocol.encode_frame(frame))
+        parser = protocol.FrameParser()
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            data = transport.read(transport.in_waiting or 1)
+            if not data:
+                continue
+            for received in parser.feed(bytes(data)):
+                if received.type == protocol.FrameType.IDENTIFY_RSP:
+                    return protocol.parse_identify(received.payload)
+        return None
+    except Exception:
+        # Not an ADC board (unreadable, malformed reply, or vanished): skip.
+        return None
+    finally:
+        with contextlib.suppress(Exception):
+            transport.close()
+
+
 def discover_adc_boards(
     *,
     vendor_id: int | None = WCH_VENDOR_ID,
@@ -83,26 +122,18 @@ def discover_adc_boards(
 
     boards: list[AdcBoard] = []
     for port in candidates:
-        driver = AdcDriver()
-        try:
-            driver.open(port.device, baud=baud, timeout=timeout)
-            info = driver.identify(timeout=timeout)
-            if (
-                info.proto_version == EXPECTED_PROTOCOL
-                and info.n_channels == EXPECTED_CHANNELS
-                and info.resolution == EXPECTED_RESOLUTION
-            ):
-                boards.append(
-                    AdcBoard(
-                        device=port.device,
-                        serial=port.serial_number or "",
-                        info=info,
-                    )
+        info = _probe(port.device, baud, timeout)
+        if info is not None and (
+            info.proto_version == EXPECTED_PROTOCOL
+            and info.n_channels == EXPECTED_CHANNELS
+            and info.resolution == EXPECTED_RESOLUTION
+        ):
+            boards.append(
+                AdcBoard(
+                    device=port.device,
+                    serial=port.serial_number or "",
+                    info=info,
                 )
-        except Exception:
-            # Not an ADC board (no reply, wrong reply, or unreadable): skip.
-            continue
-        finally:
-            driver.close()
+            )
 
     return boards

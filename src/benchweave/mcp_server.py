@@ -27,13 +27,16 @@ mcp = MCPServer("benchweave-adc")
 
 @mcp.tool()
 def list_boards() -> list[dict[str, object]]:
-    """List ADC boards discovered on attached serial ports."""
+    """Probe attached serial ports and list the ADC boards that answered
+    (device path, serial, firmware version, channel count, resolution)."""
     return manager.discover()
 
 
 @mcp.tool()
 def connect(device: str) -> dict[str, object]:
-    """Connect to an ADC board by its serial device path (e.g. /dev/ttyACM0)."""
+    """Connect to an ADC board by its serial device path (e.g. /dev/ttyACM0):
+    open the port, identify the firmware, and restore the saved channel
+    selection. Returns the new board status."""
     return manager.connect(device)
 
 
@@ -46,49 +49,66 @@ def disconnect() -> dict[str, object]:
 
 @mcp.tool()
 def status() -> dict[str, object]:
-    """Return the current board status (connection, firmware, config)."""
+    """Return the current board status: connection, firmware, averaging,
+    channel mask, streaming/recording flags, and the estimated max sample
+    rate."""
     return manager.status()
 
 
 @mcp.tool()
 def get_config() -> dict[str, Any]:
-    """Return the full runtime configuration."""
+    """Return the full runtime configuration: measurement profiles
+    (per-channel name/unit/gain/offset/show/colour plus computed channels)
+    and settings."""
     return manager.get_config()
 
 
 @mcp.tool()
 def set_config(config: dict[str, Any]) -> dict[str, Any]:
-    """Replace the runtime configuration with the given object."""
+    """Replace the runtime configuration with the given object. The config is
+    validated first (a config that would break recording or conversion is
+    rejected) and then persisted."""
     return manager.set_config(config)
 
 
 @mcp.tool()
 def set_averaging(n: int) -> dict[str, object]:
-    """Set the per-channel averaging depth (must be a supported choice)."""
+    """Set the board's hardware averaging depth - one of 0, 4, 8, 16, 32, 64,
+    128, 256. Higher averaging trades sample rate for lower noise. Requires a
+    connected board that is not streaming."""
     return manager.set_averaging(n)
 
 
 @mcp.tool()
 def set_channels(mask: int) -> dict[str, object]:
-    """Set the enabled channel bitmask (0..63)."""
+    """Set the enabled-channel bitmask, 1..63 (bits 0-4 = A0-A4, bit 5 = A7);
+    the selection is persisted. Requires a connected board that is not
+    streaming."""
     return manager.set_channels(mask)
 
 
 @mcp.tool()
 def sample_once() -> dict[str, object]:
-    """Read a single sample and return converted channel values."""
+    """Run a single-shot acquisition and return one sample's channel values,
+    converted per the active measurement profile."""
     return manager.sample_once()
 
 
 @mcp.tool()
 def capture_samples(count: int) -> dict[str, object]:
-    """Capture exactly ``count`` samples to CSV (tagged MCP) and return a summary."""
+    """Capture exactly ``count`` samples to a CSV in the captures directory
+    (filename tagged MCP) and return a compact summary: path, count, achieved
+    rate, and per-channel min/mean/max. Fails if the target is not reached
+    within 10 seconds - the full data stays in the CSV."""
     return manager.capture_samples(count, tag="MCP")
 
 
 @mcp.tool()
 def capture_seconds(seconds: float) -> dict[str, object]:
-    """Capture samples for ``seconds`` seconds to CSV (tagged MCP) and return a summary."""
+    """Capture ``seconds`` seconds of samples to a CSV in the captures
+    directory (filename tagged MCP) and return a compact summary: path,
+    count, achieved rate, and per-channel min/mean/max. The call blocks for
+    the duration; the full data stays in the CSV."""
     return manager.capture_seconds(seconds, tag="MCP")
 
 
@@ -173,10 +193,11 @@ def load_capture(stem: str) -> dict[str, object]:
 
 @mcp.tool()
 def capture_series(stem: str, name: str, max_points: int = 2000) -> dict[str, object]:
-    """Return one channel's time series from a capture, matched by channel name.
+    """Return one channel's time series from a capture, matched by channel
+    name, as [elapsed_s, value] points.
 
-    Long traces are evenly decimated to ``max_points`` (default 2000); pass 0
-    to return every point."""
+    ``max_points`` evenly decimates a longer trace to at most that many
+    points (default 2000; pass 0 for every recorded point)."""
     csv = library.file_for(stem, "csv")
     if csv is None:
         raise ValueError(f"no CSV for capture '{stem}'")

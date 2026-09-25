@@ -1,0 +1,221 @@
+{
+  "otdp_version": "0.2.2",
+  "descriptor_version": "1.0.0",
+  "id": "community.benchweave-adc.adc-6ch-12bit",
+  "display_name": "6-channel 12-bit ADC capture board",
+  "description": "CH32V006E8R data-acquisition board: six 12-bit channels streamed over a 2 Mbps CH343 USB-UART bridge with CRC-16 framing and hardware averaging.",
+  "identity": {
+    "strategy": "adapter",
+    "manufacturer": "BenchWeave community",
+    "model": "adc-6ch-12bit",
+    "firmware_policy": "listed",
+    "supported_firmware": [
+      "0.2"
+    ]
+  },
+  "integration": {
+    "mode": "adapter",
+    "adapter": {
+      "entry_point": "adc_6ch_12bit.adapter:create_plugin",
+      "api_version": "1.1",
+      "version": "1.0.0",
+      "dependencies": [],
+      "permissions": [
+        "scoped_transport",
+        "artifact_writer"
+      ]
+    }
+  },
+  "transport": {
+    "type": "serial",
+    "connection_key": "adc_board",
+    "settings": {
+      "baud": 2000000,
+      "data_bits": 8,
+      "parity": "none",
+      "stop_bits": 1,
+      "rtscts": false,
+      "max_frame_bytes": 262
+    }
+  },
+  "capabilities": [
+    "identify",
+    "invoke",
+    "reset"
+  ],
+  "operations": {
+    "identify": {
+      "timeout_ms": 2000,
+      "side_effect": "none",
+      "retry": "never",
+      "cancellable": false,
+      "completion": "acknowledged"
+    },
+    "invoke": {
+      "timeout_ms": 30000,
+      "side_effect": "state_change",
+      "retry": "never",
+      "cancellable": true,
+      "completion": "acknowledged"
+    },
+    "reset": {
+      "timeout_ms": 2000,
+      "side_effect": "state_change",
+      "retry": "never",
+      "cancellable": false,
+      "completion": "acknowledged"
+    }
+  },
+  "parameters": [],
+  "required_features": [
+    "otdp.core/0.1.0",
+    "otdp.adapter/0.1.0",
+    "otdp.profile_actions/0.1.0",
+    "otdp.measurement/0.1.0",
+    "otdp.daq/1.0.0"
+  ],
+  "provenance": {
+    "sources": [
+      {
+        "title": "ADC board wire protocol and firmware reference",
+        "reference": "README.md",
+        "revision": "firmware 0.2.0"
+      }
+    ],
+    "test_vectors": [
+      {
+        "id": "adapter-conformance",
+        "path": "../../tests/adc/test_adapter_conformance.py",
+        "purpose": "MockHost exchanges with exact frame bytes; not a device simulator"
+      }
+    ]
+  },
+  "channels": [
+    {
+      "id": "a0",
+      "label": "Channel A0",
+      "role": "analogue_input",
+      "quantities": [
+        "voltage"
+      ],
+      "parameter_names": []
+    },
+    {
+      "id": "a1",
+      "label": "Channel A1",
+      "role": "analogue_input",
+      "quantities": [
+        "voltage"
+      ],
+      "parameter_names": []
+    },
+    {
+      "id": "a2",
+      "label": "Channel A2",
+      "role": "analogue_input",
+      "quantities": [
+        "voltage"
+      ],
+      "parameter_names": []
+    },
+    {
+      "id": "a3",
+      "label": "Channel A3",
+      "role": "analogue_input",
+      "quantities": [
+        "voltage"
+      ],
+      "parameter_names": []
+    },
+    {
+      "id": "a4",
+      "label": "Channel A4",
+      "role": "analogue_input",
+      "quantities": [
+        "voltage"
+      ],
+      "parameter_names": []
+    },
+    {
+      "id": "a7",
+      "label": "Channel A7",
+      "role": "analogue_input",
+      "quantities": [
+        "voltage"
+      ],
+      "parameter_names": []
+    }
+  ],
+  "profiles": [
+    "otdp.daq/1.0.0"
+  ],
+  "actions": {
+    "otdp.daq.configure/1.0.0": {
+      "binding": {
+        "kind": "adapter",
+        "key": "otdp.daq.configure/1.0.0"
+      },
+      "input_constraints": {},
+      "timeout_ms": 30000,
+      "side_effect": "state_change",
+      "cancellable": true,
+      "retry": "never"
+    },
+    "otdp.daq.arm/1.0.0": {
+      "binding": {
+        "kind": "adapter",
+        "key": "otdp.daq.arm/1.0.0"
+      },
+      "input_constraints": {},
+      "timeout_ms": 30000,
+      "side_effect": "state_change",
+      "cancellable": true,
+      "retry": "never"
+    },
+    "otdp.daq.trigger/1.0.0": {
+      "binding": {
+        "kind": "adapter",
+        "key": "otdp.daq.trigger/1.0.0"
+      },
+      "input_constraints": {},
+      "timeout_ms": 30000,
+      "side_effect": "state_change",
+      "cancellable": true,
+      "retry": "never"
+    },
+    "otdp.daq.fetch/1.0.0": {
+      "binding": {
+        "kind": "adapter",
+        "key": "otdp.daq.fetch/1.0.0"
+      },
+      "input_constraints": {},
+      "timeout_ms": 30000,
+      "side_effect": "none",
+      "cancellable": true,
+      "retry": "never"
+    },
+    "otdp.daq.abort/1.0.0": {
+      "binding": {
+        "kind": "adapter",
+        "key": "otdp.daq.abort/1.0.0"
+      },
+      "input_constraints": {},
+      "timeout_ms": 30000,
+      "side_effect": "state_change",
+      "cancellable": true,
+      "retry": "never"
+    }
+  },
+  "contracts": [
+    {
+      "id": "urn:otdp:profile-catalog:0.2.2",
+      "path": "device-profile-catalog.json",
+      "sha256": "2e8c7841a397f794724ab2f484e7531cef47889c5f514ed68ff2c1273f0b493c"
+    },
+    {
+      "id": "urn:otdp:measurement:0.2.2",
+      "path": "otdp-measurement.schema.json",
+      "sha256": "7905795bed6139b9705edfa17b7a17226b99cddda6656030d73bb63dc998a4b3"
+    }
+  ]
+}

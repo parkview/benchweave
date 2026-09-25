@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 from typing import Any, cast
 
-from .driver import Sample
+from .protocol import Sample
 
 # Canonical ADC channel order (matches the firmware's SAMPLE frame).
 CHANNEL_KEYS = ("A0", "A1", "A2", "A3", "A4", "A7")

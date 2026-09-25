@@ -64,6 +64,15 @@ class IdentifyInfo:
     resolution: int
 
 
+@dataclass(frozen=True)
+class Sample:
+    """One parsed SAMPLE frame plus the hardware averaging in force when it arrived."""
+
+    counter: int
+    channels: tuple[int, ...]
+    averaged_n: int
+
+
 def crc16(data: bytes) -> int:
     """CRC-16/CCITT-FALSE: poly 0x1021, init 0xFFFF, no reflect, no xorout."""
     crc = 0xFFFF
@@ -101,6 +110,17 @@ class FrameParser:
                 break
             frames.append(frame)
         return frames
+
+    def bytes_wanted(self) -> int:
+        """Bytes that complete the buffered header, or else the buffered frame.
+
+        Reading exactly this many never runs past the end of an aligned frame,
+        so an exact-byte transport can deliver the wire one frame at a time.
+        """
+        buf = self._buffer
+        if len(buf) < HEADER_LEN:
+            return HEADER_LEN - len(buf)
+        return HEADER_LEN + buf[4] + CRC_LEN - len(buf)
 
     def _extract(self) -> Frame | None:
         while True:

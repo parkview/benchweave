@@ -4,6 +4,7 @@ import pytest
 
 from plugins.adc_6ch_12bit.protocol import (
     CHANNEL_MASK_ALL,
+    HEADER_LEN,
     Frame,
     FrameParser,
     FrameType,
@@ -110,3 +111,27 @@ def test_parser_drains_valid_frame_after_corrupt() -> None:
     good = Frame(type=FrameType.SAMPLE, seq=2, payload=b"\x01" * 16)
     parser = FrameParser()
     assert parser.feed(bad + encode_frame(good)) == [good]
+
+
+@pytest.mark.parametrize("noise", [b"", b"\x13\x37\xff", b"\xaa"])
+def test_bytes_wanted_reads_the_wire_one_frame_at_a_time(noise: bytes) -> None:
+    frames = [
+        Frame(type=FrameType.ACK, seq=0, payload=b"\x04\x00\x00"),
+        Frame(type=FrameType.SAMPLE, seq=1, payload=bytes(range(16))),
+        Frame(type=FrameType.START_STREAM, seq=2, payload=b""),
+    ]
+    wire = noise + b"".join(encode_frame(frame) for frame in frames)
+    parser = FrameParser()
+    got: list[Frame] = []
+    offset = 0
+    while offset < len(wire):
+        want = parser.bytes_wanted()
+        # An exact read of this size never asks for bytes past the last
+        # frame, so it cannot wait on a line that has gone quiet.
+        assert 0 < want <= len(wire) - offset
+        out = parser.feed(wire[offset : offset + want])
+        offset += want
+        assert len(out) <= 1
+        got += out
+    assert got == frames
+    assert parser.bytes_wanted() == HEADER_LEN

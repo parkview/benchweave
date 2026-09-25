@@ -10,11 +10,11 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from fakes import CSV, STEM, FakeBoardManager
 from fastapi.testclient import TestClient
 
 from benchweave.web.library import CaptureLibrary
 from plugins.adc_6ch_12bit.config import DEFAULT_CONFIG
+from tests.web.fakes import CSV, STEM, FakeBoardManager
 
 UNKNOWN_STEM = "adc_none_20260101_000000"
 HOSTILE = '" onmouseover="alert(1)'
@@ -108,10 +108,43 @@ def test_capture_data_unknown_stem_is_404(client: TestClient) -> None:
     assert response.status_code == 404
 
 
-def test_capture_data_traversal_stem_is_404(client: TestClient, captures_dir: Path) -> None:
+def test_capture_data_unsafe_stem_gets_the_route_404(
+    client: TestClient, captures_dir: Path
+) -> None:
+    """A stem the guard refuses gets the route's own 404, not the router's (#9).
+
+    ``..%2Fetc`` never reaches the handler (starlette's router answers 404
+    before it runs), so the earlier form of this test held with the guard
+    deleted. ``a b`` matches the ``{stem}`` segment, reaches ``file_for``
+    and fails the stem alphabet there. The guard itself is pinned in
+    tests/web/test_library.py::test_file_for_guard_is_load_bearing.
+    """
     _write_capture(captures_dir)
-    response = client.get("/api/captures/..%2Fetc/data")
+    response = client.get("/api/captures/a%20b/data")
     assert response.status_code == 404
+    assert response.json()["detail"] == "no CSV for 'a b'"
+
+
+@pytest.mark.parametrize("max_points", [0, -1, 5001, "all"])
+def test_capture_data_rejects_out_of_range_max_points(
+    client: TestClient, captures_dir: Path, max_points: int | str
+) -> None:
+    """#8: the decimation budget is bounded by the route, so 0 cannot mean 'all'."""
+    _write_capture(captures_dir, text=_multirow_csv(12))
+    response = client.get(f"/api/captures/{STEM}/data", params={"max_points": max_points})
+    assert response.status_code == 422
+
+
+def test_capture_data_default_budget_caps_a_long_series(
+    client: TestClient, captures_dir: Path
+) -> None:
+    """#8: with no max_points the default budget applies; the series never exceeds it."""
+    from benchweave.web import app as web_app
+
+    _write_capture(captures_dir, text=_multirow_csv(web_app.MAX_DATA_POINTS + 7))
+    response = client.get(f"/api/captures/{STEM}/data")
+    assert response.status_code == 200
+    assert len(response.json()["series"][0]["points"]) <= web_app.MAX_DATA_POINTS
 
 
 # -- /file ------------------------------------------------------------------------------

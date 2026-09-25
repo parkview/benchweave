@@ -1,5 +1,6 @@
-"""6-channel ADC board serial driver (master side)."""
+"""6-channel ADC board plugin: OTDP adapter, wire codec, config, discovery."""
 
+from .adapter import CHANNEL_IDS, AdcAdapter, create_plugin
 from .config import (
     CHANNEL_KEYS,
     DEFAULT_CONFIG,
@@ -17,35 +18,24 @@ from .discovery import (
     discover_adc_boards,
     serial_for_device,
 )
-from .driver import (
-    AdcConnectionError,
-    AdcDriver,
-    AdcError,
-    AdcNotConnected,
-    AdcProtocolError,
-    AdcTimeout,
-    Sample,
-)
 from .protocol import (
     AVERAGING_CHOICES,
     CHANNEL_MASK_ALL,
     FrameType,
     IdentifyInfo,
+    Sample,
     SampleMode,
 )
 
 __all__ = [
-    "AdcConnectionError",
-    "AdcDriver",
-    "AdcError",
-    "AdcNotConnected",
-    "AdcProtocolError",
-    "AdcTimeout",
-    "Sample",
+    "AdcAdapter",
     "AdcBoard",
+    "CHANNEL_IDS",
+    "Sample",
     "adc_capture_filename",
     "capture_dir",
     "convert_channels",
+    "create_plugin",
     "discover_adc_boards",
     "estimate_max_sps",
     "evaluate_expr",

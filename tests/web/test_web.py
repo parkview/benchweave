@@ -1,4 +1,11 @@
+"""BoardManager behaviour over the full adapter/host stack, on a fake board."""
+
+from __future__ import annotations
+
+import copy
+from collections.abc import Iterator
 from pathlib import Path
+from typing import cast
 from unittest import mock
 
 import pytest
@@ -6,50 +13,64 @@ from fastapi import HTTPException
 
 from benchweave.web import app as web_app
 from benchweave.web.board import BoardManager
-from plugins.adc_6ch_12bit.driver import Sample
-from plugins.adc_6ch_12bit.protocol import IdentifyInfo
+from plugins.adc_6ch_12bit.config import DEFAULT_CONFIG
+from tests.adc.fakeboard import SampleTuple, TransportFactory, wait_until
+
+ZERO_CHANNELS = (0, 0, 0, 0, 0, 0)
 
 
-class _FakeDriver:
-    def __init__(self) -> None:
-        self.opened = False
-        self.averaging = 0
-        self.channel_mask = 0x3F
-        self.streaming = False
+def _zeros(n: int, start: int = 0) -> list[SampleTuple]:
+    return [(start + i, ZERO_CHANNELS) for i in range(n)]
 
-    def open(self, device: str, *, baud: int = 2_000_000, timeout: float = 1.0) -> None:
-        if self.opened:
-            raise RuntimeError("already open")
-        self.opened = True
 
-    def identify(self, *, timeout: float | None = None) -> IdentifyInfo:
-        return IdentifyInfo(1, 0, 2, 6, 12)
+def _endless_zeros() -> Iterator[SampleTuple]:
+    counter = 0
+    while True:
+        yield (counter, ZERO_CHANNELS)
+        counter += 1
 
-    def set_averaging(self, n: int, *, timeout: float | None = None) -> None:
-        self.averaging = n
 
-    def set_channels(self, mask: int, *, timeout: float | None = None) -> None:
-        self.channel_mask = mask
+class _SpyRecorder:
+    """Stands in for _Recorder where the CSV contents do not matter."""
 
-    def start_stream(self, *, timeout: float | None = None) -> None:
-        self.streaming = True
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        self.path = "spy.csv"
+        self.written: list[int] = []
+        self.closed = False
+        self.resumed = False
 
-    def stop_stream(self, *, timeout: float | None = None) -> None:
-        self.streaming = False
+    def write(self, counter: int, averaged_n: int, values: list[object]) -> None:
+        self.written.append(counter)
 
     def close(self) -> None:
-        self.opened = False
+        self.closed = True
+
+    def resume(self) -> None:
+        self.resumed = True
 
 
-def test_board_connect_status_and_config() -> None:
+@pytest.fixture
+def factory() -> Iterator[TransportFactory]:
+    transport_factory = TransportFactory()
     with (
-        mock.patch("benchweave.web.board.AdcDriver", _FakeDriver),
+        mock.patch("benchweave.web.board._open_transport", transport_factory),
         mock.patch("benchweave.web.board.save_config"),
     ):
-        manager = BoardManager()
-        assert manager.status()["connected"] is False
+        yield transport_factory
 
-        manager.connect("/dev/ttyACM2")
+
+def _manager() -> BoardManager:
+    manager = BoardManager()
+    manager._config = copy.deepcopy(DEFAULT_CONFIG)
+    return manager
+
+
+def test_board_connect_status_and_config(factory: TransportFactory) -> None:
+    manager = _manager()
+    assert manager.status()["connected"] is False
+
+    manager.connect("/dev/ttyACM2")
+    try:
         status = manager.status()
         assert status["connected"] is True
         assert status["firmware"] == "0.2"
@@ -57,63 +78,79 @@ def test_board_connect_status_and_config() -> None:
 
         manager.set_averaging(16)
         assert manager.status()["averaging"] == 16
+        assert factory.last.averaging == 16  # reached the wire
 
         manager.set_channels(0x0F)
         assert manager.status()["channel_mask"] == 0x0F
+        assert factory.last.channel_mask == 0x0F
+    finally:
+        manager.disconnect()
 
 
-def test_set_channels_persists_selection() -> None:
-    with (
-        mock.patch("benchweave.web.board.AdcDriver", _FakeDriver),
-        mock.patch("benchweave.web.board.save_config") as save,
-    ):
-        manager = BoardManager()
+def test_set_channels_persists_selection(factory: TransportFactory) -> None:
+    with mock.patch("benchweave.web.board.save_config") as save:
+        manager = _manager()
         manager.connect("/dev/ttyACM2")
-        manager.set_channels(0b001011)  # a0, a1, a3
-        assert manager._config["settings"]["channel_mask"] == 0b001011
-        save.assert_called_once_with(manager._config)
+        try:
+            manager.set_channels(0b001011)  # a0, a1, a3
+            assert manager._config["settings"]["channel_mask"] == 0b001011
+            save.assert_called_once_with(manager._config)
+        finally:
+            manager.disconnect()
 
 
-def test_connect_restores_channel_mask() -> None:
-    with mock.patch("benchweave.web.board.AdcDriver", _FakeDriver):
-        manager = BoardManager()
-        manager._config = {"settings": {"channel_mask": 0b001011}}
-        manager.connect("/dev/ttyACM2")
+def test_connect_restores_channel_mask(factory: TransportFactory) -> None:
+    manager = BoardManager()
+    manager._config = {"settings": {"channel_mask": 0b001011}}
+    manager.connect("/dev/ttyACM2")
+    try:
         assert manager.status()["channel_mask"] == 0b001011
+        assert factory.last.channel_mask == 0b001011  # re-applied on the wire
+    finally:
+        manager.disconnect()
 
 
-def test_connect_defaults_to_all_channels_when_unsaved() -> None:
-    with mock.patch("benchweave.web.board.AdcDriver", _FakeDriver):
-        manager = BoardManager()
-        manager._config = {}
-        manager.connect("/dev/ttyACM2")
+def test_connect_defaults_to_all_channels_when_unsaved(factory: TransportFactory) -> None:
+    manager = BoardManager()
+    manager._config = {}
+    manager.connect("/dev/ttyACM2")
+    try:
         assert manager.status()["channel_mask"] == 0x3F  # CHANNEL_MASK_ALL
+    finally:
+        manager.disconnect()
 
 
-def test_board_rejects_config_while_streaming() -> None:
-    with mock.patch("benchweave.web.board.AdcDriver", _FakeDriver):
-        manager = BoardManager()
-        manager.connect("/dev/ttyACM2")
+def test_board_rejects_config_while_streaming(factory: TransportFactory) -> None:
+    manager = _manager()
+    manager.connect("/dev/ttyACM2")
+    try:
         manager._streaming = True  # simulate an active stream
 
         with pytest.raises(RuntimeError, match="stop streaming"):
             manager.set_averaging(4)
+    finally:
+        manager._streaming = False
+        manager.disconnect()
 
 
 def test_board_rejects_control_when_disconnected() -> None:
-    with mock.patch("benchweave.web.board.AdcDriver", _FakeDriver):
-        manager = BoardManager()
-        with pytest.raises(RuntimeError, match="no ADC board connected"):
-            manager.start_stream()
+    manager = BoardManager()
+    with pytest.raises(RuntimeError, match="no ADC board connected"):
+        manager.start_stream()
 
 
-def test_board_reconnect_closes_previous_connection() -> None:
-    with mock.patch("benchweave.web.board.AdcDriver", _FakeDriver):
-        manager = BoardManager()
-        manager.connect("/dev/ttyACM2")
-        # Reconnecting (board unplugged then replugged) must not raise "already open".
-        manager.connect("/dev/ttyACM2")
+def test_board_reconnect_closes_previous_connection(factory: TransportFactory) -> None:
+    manager = _manager()
+    manager.connect("/dev/ttyACM2")
+    # Reconnecting (board unplugged then replugged) must not leak the old port.
+    manager.connect("/dev/ttyACM2")
+    try:
         assert manager.status()["connected"] is True
+        assert len(factory.created) == 2
+        assert factory.created[0].is_open is False  # first session torn down
+        assert factory.created[1].is_open is True
+    finally:
+        manager.disconnect()
 
 
 def test_api_rejects_invalid_averaging() -> None:
@@ -129,141 +166,107 @@ def test_api_rejects_invalid_channel_mask() -> None:
 
 
 def test_record_interval_from_sample_rate() -> None:
-    with mock.patch("benchweave.web.board.AdcDriver", _FakeDriver):
-        manager = BoardManager()
-        manager._config = {"settings": {"sample_rate_hz": 100}}
-        assert manager._record_interval() == pytest.approx(0.01)
-        manager._config = {"settings": {"sample_rate_hz": None}}
-        assert manager._record_interval() == 0.0
-
-
-def test_stream_worker_assigns_sequential_counter() -> None:
     manager = BoardManager()
-    manager._loop = None  # exercise the recording path only
-    manager._config = {"settings": {"sample_rate_hz": None}}  # full rate: keep every sample
-
-    written: list[int] = []
-
-    class _SpyRecorder:
-        def write(self, counter: int, averaged_n: int, values: list[object]) -> None:
-            written.append(counter)
-
-        def close(self) -> None:
-            pass
-
-    manager._recorder = _SpyRecorder()  # type: ignore[assignment]
-    samples = [
-        Sample(counter=1000, channels=(0, 0, 0, 0, 0, 0), averaged_n=0),
-        Sample(counter=1001, channels=(0, 0, 0, 0, 0, 0), averaged_n=0),
-        Sample(counter=1002, channels=(0, 0, 0, 0, 0, 0), averaged_n=0),
-    ]
-    with (
-        mock.patch.object(manager._driver, "iter_samples", return_value=iter(samples)),
-        mock.patch.object(manager, "convert_sample", return_value=[]),
-    ):
-        manager._stream_worker()
-
-    assert written == [0, 1, 2]
+    manager._config = {"settings": {"sample_rate_hz": 100}}
+    assert manager._record_interval() == pytest.approx(0.01)
+    manager._config = {"settings": {"sample_rate_hz": None}}
+    assert manager._record_interval() == 0.0
 
 
-def test_stream_worker_decimates_to_sample_rate() -> None:
-    manager = BoardManager()
-    manager._loop = None
-    manager._config = {"settings": {"sample_rate_hz": 2}}  # 0.5 s between samples
-
-    written: list[int] = []
-
-    class _SpyRecorder:
-        def write(self, counter: int, averaged_n: int, values: list[object]) -> None:
-            written.append(counter)
-
-        def close(self) -> None:
-            pass
-
-    manager._recorder = _SpyRecorder()  # type: ignore[assignment]
-    samples = [Sample(counter=i, channels=(0, 0, 0, 0, 0, 0), averaged_n=0) for i in range(5)]
-    clock = iter([0.5, 0.75, 1.0, 1.25, 1.5])
-    with (
-        mock.patch.object(manager._driver, "iter_samples", return_value=iter(samples)),
-        mock.patch.object(manager, "convert_sample", return_value=[]),
-        mock.patch("benchweave.web.board.time.monotonic", side_effect=lambda: next(clock)),
-    ):
-        manager._stream_worker()
-
-    # Only the samples at 0.5, 1.0, 1.5 s survive the 0.5 s decimation.
-    assert written == [0, 1, 2]
-
-
-class _SpyRecorder:
-    def __init__(self) -> None:
-        self.closed = False
-        self.resumed = False
-        self.writes = 0
-
-    def write(self, counter: int, averaged_n: int, values: list[object]) -> None:
-        self.writes += 1
-
-    def close(self) -> None:
-        self.closed = True
-
-    def resume(self) -> None:
-        self.resumed = True
-
-
-def test_pause_stops_driver_and_keeps_recorder_open() -> None:
-    with mock.patch("benchweave.web.board.AdcDriver", _FakeDriver):
-        manager = BoardManager()
+def test_stream_pump_assigns_sequential_counters(factory: TransportFactory) -> None:
+    # Firmware counters (1000...) must be re-stamped with the manager's own
+    # recorded-sample counter, starting at zero.
+    factory.samples = _zeros(3, start=1000)
+    with mock.patch("benchweave.web.board._Recorder", _SpyRecorder):
+        manager = _manager()  # default config: sample_rate None keeps every sample
         manager.connect("/dev/ttyACM2")
-        manager._driver.start_stream()
-        manager._streaming = True
-        manager._recording = True
-        recorder = _SpyRecorder()
-        manager._recorder = recorder  # type: ignore[assignment]
-        manager._worker = None
-
-        status = manager.pause_stream()
-
-        assert status["paused"] is True
-        assert status["streaming"] is True
-        assert manager._driver.streaming is False  # type: ignore[attr-defined]
-        assert recorder.closed is False
+        try:
+            manager.start_stream(record=True)
+            spy = cast(_SpyRecorder, manager._recorder)
+            wait_until(lambda: len(spy.written) >= 3)
+            manager.stop_stream()
+            assert spy.written == [0, 1, 2]
+        finally:
+            manager.disconnect()
 
 
-def test_resume_restarts_driver_and_recorder() -> None:
-    with mock.patch("benchweave.web.board.AdcDriver", _FakeDriver):
-        manager = BoardManager()
+def test_stream_pump_decimates_to_sample_rate(factory: TransportFactory) -> None:
+    factory.samples = _zeros(5)
+    with mock.patch("benchweave.web.board._Recorder", _SpyRecorder):
+        manager = _manager()
+        manager._config["settings"]["sample_rate_hz"] = 1  # 1 s between samples
         manager.connect("/dev/ttyACM2")
-        manager._streaming = True
-        manager._paused = True
-        manager._counter = 42
-        recorder = _SpyRecorder()
-        manager._recorder = recorder  # type: ignore[assignment]
-        manager._worker = None
+        try:
+            manager.start_stream(record=True)
+            spy = cast(_SpyRecorder, manager._recorder)
+            wait_until(lambda: len(spy.written) >= 1)
+            # All five samples arrive within far less than the 1 s interval,
+            # so only the first survives the decimation.
+            wait_until(lambda: not factory.last.streaming or factory.last.in_waiting == 0)
+            manager.stop_stream()
+            assert spy.written == [0]
+        finally:
+            manager.disconnect()
 
-        with mock.patch.object(manager, "_stream_worker", return_value=None):
+
+def test_pause_stops_board_and_keeps_recorder_open(factory: TransportFactory) -> None:
+    factory.samples = _endless_zeros()
+    with mock.patch("benchweave.web.board._Recorder", _SpyRecorder):
+        manager = _manager()
+        manager.connect("/dev/ttyACM2")
+        try:
+            manager.start_stream(record=True)
+            spy = cast(_SpyRecorder, manager._recorder)
+            assert factory.last.streaming is True
+
+            status = manager.pause_stream()
+
+            assert status["paused"] is True
+            assert status["streaming"] is True
+            assert factory.last.streaming is False  # STOP_STREAM reached the board
+            assert spy.closed is False  # the CSV stays open across a pause
+        finally:
+            manager.disconnect()
+
+
+def test_resume_restarts_board_and_recorder(factory: TransportFactory) -> None:
+    factory.samples = ()  # nothing to emit: the counter must not move
+    with mock.patch("benchweave.web.board._Recorder", _SpyRecorder):
+        manager = _manager()
+        manager.connect("/dev/ttyACM2")
+        try:
+            manager.start_stream(record=True)
+            spy = cast(_SpyRecorder, manager._recorder)
+            manager.pause_stream()
+            manager._counter = 42
+
             status = manager.resume_stream()
 
-        assert status["paused"] is False
-        assert manager._driver.streaming is True  # type: ignore[attr-defined]
-        assert recorder.resumed is True
-        assert manager._counter == 42  # counter survives a resume
+            assert status["paused"] is False
+            assert factory.last.streaming is True  # a fresh acquisition was armed
+            assert spy.resumed is True
+            assert manager._counter == 42  # counter survives a resume
+        finally:
+            manager.disconnect()
 
 
-def test_stop_after_pause_closes_recorder() -> None:
-    with mock.patch("benchweave.web.board.AdcDriver", _FakeDriver):
-        manager = BoardManager()
+def test_stop_after_pause_closes_recorder(factory: TransportFactory) -> None:
+    factory.samples = ()
+    with mock.patch("benchweave.web.board._Recorder", _SpyRecorder):
+        manager = _manager()
         manager.connect("/dev/ttyACM2")
-        manager._streaming = True
-        manager._paused = True
-        recorder = _SpyRecorder()
-        manager._recorder = recorder  # type: ignore[assignment]
-        manager._worker = None
+        try:
+            manager.start_stream(record=True)
+            spy = cast(_SpyRecorder, manager._recorder)
+            manager.pause_stream()
 
-        status = manager.stop_stream()
+            status = manager.stop_stream()
 
-        assert status["streaming"] is False
-        assert status["paused"] is False
-        assert recorder.closed is True
+            assert status["streaming"] is False
+            assert status["paused"] is False
+            assert spy.closed is True
+        finally:
+            manager.disconnect()
 
 
 def test_save_graph_png_names_after_csv(tmp_path: Path) -> None:
