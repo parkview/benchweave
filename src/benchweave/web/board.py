@@ -536,13 +536,14 @@ class BoardManager:
             self._worker = None
 
     def _stop_stream_locked(self) -> None:
-        if not self._streaming:
-            return
-        with suppress(Exception):
-            self._driver.stop_stream()
-        self._streaming = False
-        self._paused = False
-        self._join_worker()
+        if self._streaming:
+            with suppress(Exception):
+                self._driver.stop_stream()
+            self._streaming = False
+            self._paused = False
+            self._join_worker()
+        # Past this point the stream is stopped whoever stopped it; the
+        # recorder is flushed and closed exactly once either way (#7).
         self._recording = False
         if self._recorder is not None:
             with suppress(Exception):
@@ -590,8 +591,26 @@ class BoardManager:
             # claiming a stream that is no longer running.
             _LOG.exception("stream worker stopped on error")
             self._last_error = f"stream stopped: {exc}"
+            # A CSV write failure leaves the driver (and the board) streaming,
+            # and once _streaming is False _stop_stream_locked skips the stop
+            # (#12): send it here. A faulted driver refuses before writing, so
+            # a dead transport costs nothing.
+            with suppress(Exception):
+                self._driver.stop_stream()
             self._streaming = False
             self._paused = False
+            # _streaming is already False, so a later stop_stream() would not
+            # release the recorder: buffered rows would never be flushed and
+            # the CSV handle would leak until exit (#7). Release it here, the
+            # way _stop_stream_locked does, and stop claiming a recording that
+            # is no longer being written. record_path is kept, as it is after
+            # a normal stop, so the graph can still be saved beside the CSV.
+            self._recording = False
+            self._worker = None
+            stale, self._recorder = self._recorder, None
+            if stale is not None:
+                with suppress(Exception):
+                    stale.close()
 
     def _publish(self, sample: Sample) -> None:
         for q in self._subscribers:
@@ -664,3 +683,26 @@ def _validate_config(config: dict[str, Any]) -> None:
         isinstance(rate, bool) or not isinstance(rate, (int, float)) or rate <= 0
     ):
         raise ValueError("'settings.sample_rate_hz' must be a positive number or null")
+    # The remaining keys used to be persisted untyped; a string retention_days
+    # then raised TypeError in every capture listing (#6). Each key is checked
+    # against the type its readers assume, and null keeps its meaning.
+    for key, kind, floor in (
+        ("retention_days", int, 1),
+        ("graph_points", int, 1),
+        ("graph_width", int, 1),
+    ):
+        value = settings.get(key)
+        if value is not None and (
+            isinstance(value, bool) or not isinstance(value, kind) or value < floor
+        ):
+            raise ValueError(f"'settings.{key}' must be an integer >= {floor} or null")
+    scroll = settings.get("graph_scroll")
+    if scroll is not None and not isinstance(scroll, bool):
+        raise ValueError("'settings.graph_scroll' must be a boolean or null")
+    mask = settings.get("channel_mask")
+    if mask is not None and (
+        isinstance(mask, bool) or not isinstance(mask, int) or not 0 <= mask <= CHANNEL_MASK_ALL
+    ):
+        raise ValueError(
+            f"'settings.channel_mask' must be an integer 0..{CHANNEL_MASK_ALL} or null"
+        )
